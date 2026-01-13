@@ -1,0 +1,86 @@
+package task
+
+import (
+	"context"
+	"time"
+
+	"github.com/hangter-lt/task-scheduler/types"
+)
+
+// RetryPolicy 任务重试策略
+type RetryPolicy struct {
+	MaxRetry     int           // 最大重试次数，0表示不重试
+	RetryDelay   time.Duration // 重试间隔
+	CurrentRetry int           // 当前重试次数
+}
+
+// Task 任务接口，所有任务类型都必须实现此接口
+type Task interface {
+	ID() string                    // 获取任务ID
+	Type() types.TaskType          // 获取任务类型(once/cron)
+	NextExecTime() time.Time       // 获取下次执行时间
+	Run(ctx context.Context) error // 执行任务
+	Timeout() time.Duration        // 获取任务超时时间
+	RetryPolicy() *RetryPolicy     // 获取重试策略
+	SetNextExecTime(time.Time)     // 设置下次执行时间
+	ResetRetry()                   // 重置重试次数
+	UpdateNextExecTime()           // 更新下次执行时间（主要用于周期任务）
+}
+
+// BaseTask 任务基础结构，包含所有任务的通用字段
+type BaseTask struct {
+	id           string           // 任务唯一标识
+	timeout      time.Duration    // 任务超时时间
+	retryPolicy  *RetryPolicy     // 重试策略
+	nextExecTime time.Time        // 下次执行时间
+	taskType     types.TaskType   // 任务类型
+	handleFunc   types.HandleFunc // 任务执行逻辑
+	params       map[string]any   // 任务通用参数
+}
+
+// ID 获取任务ID
+func (b *BaseTask) ID() string {
+	return b.id
+}
+
+// Type 获取任务类型
+func (b *BaseTask) Type() types.TaskType {
+	return b.taskType
+}
+
+// NextExecTime 获取下次执行时间
+func (b *BaseTask) NextExecTime() time.Time {
+	return b.nextExecTime
+}
+
+// Timeout 获取任务超时时间
+func (b *BaseTask) Timeout() time.Duration {
+	return b.timeout
+}
+
+// RetryPolicy 获取重试策略
+func (b *BaseTask) RetryPolicy() *RetryPolicy {
+	return b.retryPolicy
+}
+
+// SetNextExecTime 设置下次执行时间
+func (b *BaseTask) SetNextExecTime(t time.Time) {
+	b.nextExecTime = t
+}
+
+// ResetRetry 重置重试次数
+func (b *BaseTask) ResetRetry() {
+	if b.retryPolicy != nil {
+		b.retryPolicy.CurrentRetry = 0
+	}
+}
+
+// UpdateNextExecTime 更新下次执行时间
+// 基础任务不实现此方法，由具体任务类型实现
+func (b *BaseTask) UpdateNextExecTime() {
+}
+
+// Run 执行任务
+func (b *BaseTask) Run(ctx context.Context) error {
+	return b.handleFunc(ctx, b.params)
+}
