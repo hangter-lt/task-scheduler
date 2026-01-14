@@ -13,12 +13,13 @@ import (
 
 // Scheduler 任务调度器，负责管理和调度各种类型的任务
 type Scheduler struct {
-	heap      *TaskHeap            // 任务最小堆，按下次执行时间排序
-	taskMap   map[string]task.Task // 任务ID->任务的映射，用于快速查找和取消任务
-	mu        sync.Mutex           // 并发锁，保护共享资源
-	executor  *executor.Executor   // 任务执行器，用于实际执行任务
-	stopCh    chan struct{}        // 停止信号通道，用于优雅关闭调度器
-	isRunning bool                 // 运行状态标志
+	heap           *TaskHeap            // 任务最小堆，按下次执行时间排序
+	taskMap        map[string]task.Task // 任务ID->任务的映射，用于快速查找和取消任务
+	cancelledTasks map[string]task.Task // 已取消任务的映射，用于恢复任务
+	mu             sync.Mutex           // 并发锁，保护共享资源
+	executor       *executor.Executor   // 任务执行器，用于实际执行任务
+	stopCh         chan struct{}        // 停止信号通道，用于优雅关闭调度器
+	isRunning      bool                 // 运行状态标志
 }
 
 // NewScheduler 创建一个新的任务调度器
@@ -28,12 +29,13 @@ func NewScheduler(exec *executor.Executor) *Scheduler {
 	heap.Init(h)
 
 	return &Scheduler{
-		heap:      h,
-		taskMap:   make(map[string]task.Task),
-		mu:        sync.Mutex{},
-		executor:  exec,
-		stopCh:    make(chan struct{}),
-		isRunning: false,
+		heap:           h,
+		taskMap:        make(map[string]task.Task),
+		cancelledTasks: make(map[string]task.Task),
+		mu:             sync.Mutex{},
+		executor:       exec,
+		stopCh:         make(chan struct{}),
+		isRunning:      false,
 	}
 }
 
@@ -60,6 +62,12 @@ func (s *Scheduler) Cancel(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// 查找任务
+	t, ok := s.taskMap[id]
+	if !ok {
+		return
+	}
+
 	// 从映射中移除任务
 	delete(s.taskMap, id)
 
@@ -70,6 +78,40 @@ func (s *Scheduler) Cancel(id string) {
 			break
 		}
 	}
+
+	// 将任务保存到已取消任务映射中
+	s.cancelledTasks[id] = t
+}
+
+// Resume 恢复已取消的任务
+// id: 要恢复的任务ID
+func (s *Scheduler) Resume(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 从已取消任务映射中查找任务
+	t, ok := s.cancelledTasks[id]
+	if !ok {
+		return
+	}
+
+	// 从已取消任务映射中移除
+	delete(s.cancelledTasks, id)
+
+	// 确保下次执行时间正确
+	// 对于一次性任务，如果执行时间已过，使用当前时间
+	// 对于周期任务，重新计算下次执行时间
+	if t.NextExecTime().Before(time.Now()) {
+		if t.Type() == types.TaskTypeOnce {
+			t.SetNextExecTime(time.Now())
+		} else {
+			t.UpdateNextExecTime()
+		}
+	}
+
+	// 重新添加到任务队列
+	s.taskMap[id] = t
+	heap.Push(s.heap, t)
 }
 
 // Run 启动调度器

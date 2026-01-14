@@ -64,6 +64,7 @@
 - `NewScheduler(exec *executor.Executor) *Scheduler` - 创建一个新的调度器
 - `Register(t task.Task)` - 注册任务到调度器
 - `Cancel(id string)` - 取消指定ID的任务
+- `Resume(id string)` - 恢复已取消的任务
 - `Run()` - 启动调度器
 - `Stop()` - 停止调度器
 - `IsRunning() bool` - 检查调度器是否正在运行
@@ -258,6 +259,26 @@ sch.Register(task)
 sch.Cancel("task-id")
 ```
 
+### 任务恢复
+
+可以通过任务ID恢复已取消的任务，支持一次性任务和Cron任务。
+
+```go
+// 取消任务
+sch.Cancel("task-id")
+
+// 恢复任务
+sch.Resume("task-id")
+```
+
+任务恢复的特点：
+- 支持恢复一次性任务和Cron任务
+- 智能处理过期任务：
+  - 一次性任务：如果执行时间已过，设置为当前时间立即执行
+  - Cron任务：如果执行时间已过，重新计算下次执行时间
+- 保持任务的原有属性和配置
+- 线程安全，支持并发操作
+
 ## 运行测试
 
 ```bash
@@ -284,7 +305,7 @@ go test ./...
 
 ## TODO
 
-- [ ] 针对已取消的cron任务,增加恢复功能
+- [x] 针对已取消的cron任务,增加恢复功能
 - [ ] 增加已注册任务信息查询
 - [ ] 支持分布式任务调度
 - [ ] 支持任务持久化
