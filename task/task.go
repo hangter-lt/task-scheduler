@@ -2,9 +2,16 @@ package task
 
 import (
 	"context"
+	"fmt"
 	"time"
+)
 
-	"github.com/hangter-lt/task-scheduler/types"
+// TaskType 任务类型枚举
+type TaskType string
+
+const (
+	TaskTypeOnce TaskType = "once" // 一次性任务，只执行一次
+	TaskTypeCron TaskType = "cron" // Cron任务，按表达式周期性执行
 )
 
 // RetryPolicy 任务重试策略
@@ -17,7 +24,7 @@ type RetryPolicy struct {
 // Task 任务接口，所有任务类型都必须实现此接口
 type Task interface {
 	ID() string                    // 获取任务ID
-	Type() types.TaskType          // 获取任务类型(once/cron)
+	Type() TaskType                // 获取任务类型(once/cron)
 	NextExecTime() time.Time       // 获取下次执行时间
 	Run(ctx context.Context) error // 执行任务
 	Timeout() time.Duration        // 获取任务超时时间
@@ -29,13 +36,13 @@ type Task interface {
 
 // BaseTask 任务基础结构，包含所有任务的通用字段
 type BaseTask struct {
-	id           string           // 任务唯一标识
-	timeout      time.Duration    // 任务超时时间
-	retryPolicy  *RetryPolicy     // 重试策略
-	nextExecTime time.Time        // 下次执行时间
-	taskType     types.TaskType   // 任务类型
-	handleFunc   types.HandleFunc // 任务执行逻辑
-	params       map[string]any   // 任务通用参数
+	id           string         // 任务唯一标识
+	timeout      time.Duration  // 任务超时时间
+	retryPolicy  *RetryPolicy   // 重试策略
+	nextExecTime time.Time      // 下次执行时间
+	taskType     TaskType       // 任务类型
+	funcID       FuncID         // 任务执行函数标识符
+	params       map[string]any // 任务通用参数
 }
 
 // ID 获取任务ID
@@ -44,7 +51,7 @@ func (b *BaseTask) ID() string {
 }
 
 // Type 获取任务类型
-func (b *BaseTask) Type() types.TaskType {
+func (b *BaseTask) Type() TaskType {
 	return b.taskType
 }
 
@@ -82,5 +89,9 @@ func (b *BaseTask) UpdateNextExecTime() {
 
 // Run 执行任务
 func (b *BaseTask) Run(ctx context.Context) error {
-	return b.handleFunc(ctx, b.params)
+	f, ok := GetFunc(b.funcID)
+	if !ok {
+		return fmt.Errorf("task func not found: %s", b.funcID)
+	}
+	return f(ctx, b.params)
 }

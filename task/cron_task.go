@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hangter-lt/task-scheduler/types"
-
 	"github.com/robfig/cron/v3"
 )
 
@@ -21,7 +19,7 @@ func NewCronTask(
 	cronExpr string,
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
-	handleFunc types.HandleFunc,
+	funcID FuncID,
 	params map[string]any,
 ) *CronTask {
 	if retryPolicy == nil {
@@ -49,8 +47,8 @@ func NewCronTask(
 			timeout:      timeout,
 			retryPolicy:  retryPolicy,
 			nextExecTime: nextExec,
-			taskType:     types.TaskTypeCron,
-			handleFunc:   handleFunc,
+			taskType:     TaskTypeCron,
+			funcID:       funcID,
 			params:       params,
 		},
 		cronExpr:   cronExpr,

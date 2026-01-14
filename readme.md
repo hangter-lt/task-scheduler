@@ -17,18 +17,17 @@
 │   ├── executor.go
 │   └── executor_test.go
 ├── examples/       # 示例代码
-│   └── main.go
+│   ├── main.go
 ├── scheduler/      # 调度器，负责调度任务
 │   ├── heap.go
 │   ├── scheduler.go
 │   └── scheduler_test.go
 ├── task/           # 任务定义
 │   ├── cron_task.go
+│   ├── func.go        # 函数注册管理
 │   ├── once_task.go
 │   ├── task.go
 │   └── task_test.go
-├── types/          # 通用类型定义
-│   └── types.go
 ├── go.mod
 └── go.sum
 ```
@@ -59,6 +58,7 @@
 - 支持任务的注册、取消和重新调度
 - 自动处理任务的超时和重试
 - 支持优雅关闭
+- 支持Redis持久化
 
 #### API
 - `NewScheduler(exec *executor.Executor) *Scheduler` - 创建一个新的调度器
@@ -68,7 +68,6 @@
 - `Run()` - 启动调度器
 - `Stop()` - 停止调度器
 - `IsRunning() bool` - 检查调度器是否正在运行
-
 ### 3. 任务类型
 
 #### 一次性任务（OnceTask）
@@ -92,6 +91,19 @@
 - 支持秒级精度
 - 支持复杂的调度规则
 - 执行完成后自动计算下次执行时间
+### 4. 函数注册（Func Registry）
+
+函数注册机制允许将任务执行函数注册到全局注册表中，通过函数ID引用，实现了任务定义与执行逻辑的解耦。
+
+#### 主要功能
+- 支持任务执行函数的注册和管理
+- 通过函数ID引用执行函数
+- 支持动态注册和获取
+
+#### API
+- `RegisterFunc(id FuncID, f HandleFunc)` - 注册任务执行函数
+- `GetFunc(id FuncID) (HandleFunc, bool)` - 根据ID获取任务执行函数
+
 
 ## 快速开始
 
@@ -103,6 +115,7 @@ go get -u github.com/hangter-lt/task-scheduler
 
 ### 运行示例
 
+#### 基本示例
 ```bash
 go run examples/main.go
 ```
@@ -116,7 +129,6 @@ import (
     "github.com/hangter-lt/task-scheduler/executor"
     "github.com/hangter-lt/task-scheduler/scheduler"
     "github.com/hangter-lt/task-scheduler/task"
-    "github.com/hangter-lt/task-scheduler/types"
 )
 ```
 
@@ -141,7 +153,19 @@ sch := scheduler.NewScheduler(exec)
 go sch.Run()
 ```
 
-#### 4. 注册任务
+#### 4. 注册任务函数
+
+```go
+// 注册任务执行函数	
+task.RegisterFunc("example-func-1", func(ctx context.Context, params map[string]any) error {
+	name := params["name"].(string)
+	value := params["value"].(int)
+	println("执行任务:", name, "值:", value)
+	return nil
+})
+```
+
+#### 5. 注册任务
 
 ##### 一次性任务
 
@@ -152,10 +176,7 @@ onceTask := task.NewOnceTask(
     time.Now().Add(time.Second*1),
     0, // 超时时间（0表示不超时）
     nil, // 重试策略
-    func(ctx context.Context, params map[string]any) error {
-        fmt.Println("一次性任务执行")
-        return nil
-    },
+    "example-func-1", // 函数ID
     map[string]any{"key": "value"}, // 任务参数
 )
 
@@ -171,10 +192,7 @@ immediateTask := task.NewImmediateTask(
     "immediate-task-id",
     0, // 超时时间
     nil, // 重试策略
-    func(ctx context.Context, params map[string]any) error {
-        fmt.Println("立即执行任务")
-        return nil
-    },
+    "example-func-1", // 函数ID
     nil, // 任务参数
 )
 
@@ -190,10 +208,7 @@ cronTask := task.NewCronTask(
     "*/1 * * * * *", // 秒级Cron表达式
     time.Second*1, // 超时时间
     &task.RetryPolicy{MaxRetry: 3, RetryDelay: time.Second}, // 重试策略
-    func(ctx context.Context, params map[string]any) error {
-        fmt.Println("Cron任务执行")
-        return nil
-    },
+    "example-func-1", // 函数ID
     nil, // 任务参数
 )
 
@@ -213,12 +228,7 @@ onceTask := task.NewOnceTask(
     time.Now().Add(time.Second*1),
     time.Millisecond*500, // 超时时间
     nil,
-    func(ctx context.Context, params map[string]any) error {
-        // 模拟长时间执行
-        time.Sleep(time.Second*1)
-        fmt.Println("任务执行完成")
-        return nil
-    },
+    "example-func-1", // 函数ID
     nil,
 )
 ```
@@ -239,10 +249,7 @@ cronTask := task.NewCronTask(
     "*/1 * * * * *",
     0,
     retryPolicy,
-    func(ctx context.Context, params map[string]any) error {
-        fmt.Println("任务执行")
-        return errors.New("模拟执行失败")
-    },
+    "example-func-1", // 函数ID
     nil,
 )
 ```

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/hangter-lt/task-scheduler/task"
-	"github.com/hangter-lt/task-scheduler/types"
 )
 
 func TestExecutor(t *testing.T) {
@@ -305,8 +304,8 @@ func (m *mockTask) ID() string {
 	return m.id
 }
 
-func (m *mockTask) Type() types.TaskType {
-	return types.TaskTypeOnce
+func (m *mockTask) Type() task.TaskType {
+	return task.TaskTypeOnce
 }
 
 func (m *mockTask) NextExecTime() time.Time {

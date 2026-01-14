@@ -2,8 +2,6 @@ package task
 
 import (
 	"time"
-
-	"github.com/hangter-lt/task-scheduler/types"
 )
 
 // 单性任务
@@ -16,7 +14,7 @@ func NewOnceTask(
 	execTime time.Time,
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
-	handleFunc types.HandleFunc,
+	funcID FuncID,
 	params map[string]any,
 ) *OnceTask {
 	if retryPolicy == nil {
@@ -36,8 +34,8 @@ func NewOnceTask(
 			timeout:      timeout,
 			retryPolicy:  retryPolicy,
 			nextExecTime: execTime,
-			taskType:     types.TaskTypeOnce,
-			handleFunc:   handleFunc,
+			taskType:     TaskTypeOnce,
+			funcID:       funcID,
 			params:       params,
 		},
 	}
@@ -48,11 +46,11 @@ func NewImmediateTask(
 	id string,
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
-	execFunc types.HandleFunc,
+	funcID FuncID,
 	params map[string]any,
 ) *OnceTask {
 	// 调用NewOnceTask，传入当前时间作为执行时间
-	return NewOnceTask(id, time.Now(), timeout, retryPolicy, execFunc, params)
+	return NewOnceTask(id, time.Now(), timeout, retryPolicy, funcID, params)
 }
 
 // 清空下次执行时间

@@ -8,7 +8,6 @@ import (
 
 	"github.com/hangter-lt/task-scheduler/executor"
 	"github.com/hangter-lt/task-scheduler/task"
-	"github.com/hangter-lt/task-scheduler/types"
 )
 
 // Scheduler 任务调度器，负责管理和调度各种类型的任务
@@ -104,7 +103,7 @@ func (s *Scheduler) Resume(id string) {
 	// 对于一次性任务，如果执行时间已过，使用当前时间
 	// 对于周期任务，重新计算下次执行时间
 	if t.NextExecTime().Before(time.Now()) {
-		if t.Type() == types.TaskTypeOnce {
+		if t.Type() == task.TaskTypeOnce {
 			t.SetNextExecTime(time.Now())
 		} else {
 			t.UpdateNextExecTime()
@@ -236,7 +235,7 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error) {
 	t.ResetRetry()
 
 	// 周期任务, 计算下次执行时间
-	if t.Type() == types.TaskTypeCron {
+	if t.Type() == task.TaskTypeCron {
 		t.UpdateNextExecTime()
 		// 重新添加到任务队列
 		s.taskMap[t.ID()] = t

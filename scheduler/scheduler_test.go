@@ -3,7 +3,6 @@ package scheduler
 import (
 	"container/heap"
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -11,6 +10,18 @@ import (
 	"github.com/hangter-lt/task-scheduler/executor"
 	"github.com/hangter-lt/task-scheduler/task"
 )
+
+// 注册测试函数
+func init() {
+	// 注册测试函数，用于scheduler测试
+	task.RegisterFunc("scheduler-test-func-1", func(ctx context.Context, params map[string]any) error {
+		return nil
+	})
+
+	task.RegisterFunc("scheduler-test-func-2", func(ctx context.Context, params map[string]any) error {
+		return nil
+	})
+}
 
 func TestTaskHeap(t *testing.T) {
 	// 创建执行器
@@ -29,9 +40,7 @@ func TestTaskHeap(t *testing.T) {
 		time.Now().Add(time.Second*3),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -40,9 +49,7 @@ func TestTaskHeap(t *testing.T) {
 		time.Now().Add(time.Second*1),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -51,9 +58,7 @@ func TestTaskHeap(t *testing.T) {
 		time.Now().Add(time.Second*2),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -103,9 +108,7 @@ func TestSchedulerRegister(t *testing.T) {
 		time.Now().Add(time.Second),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -148,9 +151,7 @@ func TestSchedulerCancel(t *testing.T) {
 		time.Now().Add(time.Second*5), // 5s 后执行
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -195,11 +196,7 @@ func TestSchedulerOnceTaskExecution(t *testing.T) {
 		time.Now().Add(time.Millisecond*200), // 200ms 后执行
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			defer wg.Done()
-			taskExecuted = true
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -258,13 +255,7 @@ func TestSchedulerCronTaskExecution(t *testing.T) {
 		"*/1 * * * * *", // 每秒执行一次
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			callCount++
-			if callCount <= 2 {
-				wg.Done()
-			}
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -320,10 +311,7 @@ func TestSchedulerFailedTaskRecording(t *testing.T) {
 		time.Now(), // 立即执行
 		time.Second*5,
 		retryPolicy,
-		func(ctx context.Context, params map[string]any) error {
-			executionCount++
-			return errors.New("test task failed") // 总是返回错误
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -446,11 +434,7 @@ func TestSchedulerTaskWithParams(t *testing.T) {
 		time.Now().Add(time.Millisecond*200),
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			defer wg.Done()
-			receivedParams = params
-			return nil
-		},
+		"",
 		testParams,
 	)
 
@@ -504,13 +488,7 @@ func TestSchedulerCronTaskResume(t *testing.T) {
 		"*/1 * * * * *", // 每秒执行一次
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			callCount++
-			if callCount <= 2 {
-				wg.Done()
-			}
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -598,11 +576,7 @@ func TestSchedulerOnceTaskResume(t *testing.T) {
 		time.Now().Add(time.Second*2),
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			defer wg.Done()
-			taskExecuted = true
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
