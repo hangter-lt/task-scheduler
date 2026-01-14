@@ -3,6 +3,7 @@ package scheduler
 import (
 	"container/heap"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -291,6 +292,94 @@ func TestSchedulerCronTaskExecution(t *testing.T) {
 	if scheduler.IsRunning() {
 		t.Error("Expected scheduler to be stopped")
 	}
+}
+
+func TestSchedulerFailedTaskRecording(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 设置重试策略：最大重试2次，重试间隔100ms
+	retryPolicy := &task.RetryPolicy{
+		MaxRetry:   2,
+		RetryDelay: time.Millisecond * 100,
+	}
+
+	// 测试标志
+	var executionCount int
+
+	// 创建测试任务，总是返回错误
+	testTask := task.NewOnceTask(
+		"failed-task-test",
+		time.Now(), // 立即执行
+		time.Second*5,
+		retryPolicy,
+		func(ctx context.Context, params map[string]any) error {
+			executionCount++
+			return errors.New("test task failed") // 总是返回错误
+		},
+		map[string]any{},
+	)
+
+	// 注册任务
+	scheduler.Register(testTask)
+
+	// 启动调度器
+	go scheduler.Run()
+
+	// 等待任务重试完成（重试2次 + 初始执行 = 3次执行）
+	time.Sleep(time.Millisecond * 500)
+
+	// 停止调度器
+	scheduler.Stop()
+
+	// 等待调度器完全停止
+	time.Sleep(time.Millisecond * 300)
+
+	// 验证任务执行了3次（初始执行 + 2次重试）
+	if executionCount != 3 {
+		t.Errorf("Expected task to be executed 3 times, got %d calls", executionCount)
+	}
+
+	// 验证任务被记录为失败任务
+	failedTask, ok := scheduler.GetFailedTask("failed-task-test")
+	if !ok {
+		t.Error("Expected failed task to be recorded in failedTasks")
+	} else {
+		if failedTask.ID() != "failed-task-test" {
+			t.Errorf("Expected failed task ID to be 'failed-task-test', got %s", failedTask.ID())
+		}
+		// 验证重试次数已达到上限
+		if failedTask.RetryPolicy().CurrentRetry != 2 {
+			t.Errorf("Expected failed task to have CurrentRetry = 2, got %d", failedTask.RetryPolicy().CurrentRetry)
+		}
+	}
+
+	// 验证通过GetAllFailedTasks可以获取到失败任务
+	allFailedTasks := scheduler.GetAllFailedTasks()
+	if len(allFailedTasks) != 1 {
+		t.Errorf("Expected GetAllFailedTasks to return 1 task, got %d tasks", len(allFailedTasks))
+	} else {
+		if allFailedTasks[0].ID() != "failed-task-test" {
+			t.Errorf("Expected failed task ID from GetAllFailedTasks to be 'failed-task-test', got %s", allFailedTasks[0].ID())
+		}
+	}
+
+	// 验证任务已从活跃任务列表中移除
+	scheduler.mu.Lock()
+	if _, ok := scheduler.taskMap["failed-task-test"]; ok {
+		t.Error("Expected failed task to be removed from taskMap")
+	}
+	if scheduler.heap.Len() != 0 {
+		t.Errorf("Expected heap to be empty after task failed, got %d tasks in heap", scheduler.heap.Len())
+	}
+	scheduler.mu.Unlock()
 }
 
 func TestSchedulerRunAndStop(t *testing.T) {

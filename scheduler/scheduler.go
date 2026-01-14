@@ -16,6 +16,7 @@ type Scheduler struct {
 	heap           *TaskHeap            // 任务最小堆，按下次执行时间排序
 	taskMap        map[string]task.Task // 任务ID->任务的映射，用于快速查找和取消任务
 	cancelledTasks map[string]task.Task // 已取消任务的映射，用于恢复任务
+	failedTasks    map[string]task.Task // 重试后仍失败的任务映射，用于记录失败任务
 	mu             sync.Mutex           // 并发锁，保护共享资源
 	executor       *executor.Executor   // 任务执行器，用于实际执行任务
 	stopCh         chan struct{}        // 停止信号通道，用于优雅关闭调度器
@@ -32,6 +33,7 @@ func NewScheduler(exec *executor.Executor) *Scheduler {
 		heap:           h,
 		taskMap:        make(map[string]task.Task),
 		cancelledTasks: make(map[string]task.Task),
+		failedTasks:    make(map[string]task.Task),
 		mu:             sync.Mutex{},
 		executor:       exec,
 		stopCh:         make(chan struct{}),
@@ -212,16 +214,22 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error) {
 	defer s.mu.Unlock()
 
 	// 失败重试逻辑
-	if execErr != nil && t.RetryPolicy().MaxRetry > t.RetryPolicy().CurrentRetry {
-		// 增加重试次数
-		t.RetryPolicy().CurrentRetry++
-		// 计算重试执行时间（当前时间+重试间隔）
-		retryTime := time.Now().Add(t.RetryPolicy().RetryDelay)
-		t.SetNextExecTime(retryTime)
-		// 重新添加到任务队列
-		s.taskMap[t.ID()] = t
-		heap.Push(s.heap, t)
-		return
+	if execErr != nil {
+		if t.RetryPolicy().MaxRetry > t.RetryPolicy().CurrentRetry {
+			// 增加重试次数
+			t.RetryPolicy().CurrentRetry++
+			// 计算重试执行时间（当前时间+重试间隔）
+			retryTime := time.Now().Add(t.RetryPolicy().RetryDelay)
+			t.SetNextExecTime(retryTime)
+			// 重新添加到任务队列
+			s.taskMap[t.ID()] = t
+			heap.Push(s.heap, t)
+			return
+		} else {
+			// 重试次数已达上限，记录为失败任务
+			s.failedTasks[t.ID()] = t
+			return
+		}
 	}
 
 	// 成功重置重试次数
@@ -248,4 +256,28 @@ func (s *Scheduler) IsRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.isRunning
+}
+
+// GetFailedTask 获取指定ID的失败任务
+// id: 要获取的失败任务ID
+// 返回: 失败任务，存在返回true，否则返回false
+func (s *Scheduler) GetFailedTask(id string) (task.Task, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	t, ok := s.failedTasks[id]
+	return t, ok
+}
+
+// GetAllFailedTasks 获取所有失败任务
+// 返回: 所有失败任务的切片
+func (s *Scheduler) GetAllFailedTasks() []task.Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	failedTasks := make([]task.Task, 0, len(s.failedTasks))
+	for _, t := range s.failedTasks {
+		failedTasks = append(failedTasks, t)
+	}
+	return failedTasks
 }
