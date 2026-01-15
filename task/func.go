@@ -3,7 +3,7 @@ package task
 import "context"
 
 // HandleFunc 任务执行函数类型
-type HandleFunc func(ctx context.Context, params map[string]any) error
+type HandleFunc func(ctx context.Context, params any) error
 
 // FuncID 函数标识符类型
 type FuncID string

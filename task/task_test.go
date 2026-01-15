@@ -20,21 +20,18 @@ var (
 
 // 初始化函数，注册测试函数
 func init() {
-	RegisterFunc(testFuncID1, func(ctx context.Context, params map[string]any) error {
+	RegisterFunc(testFuncID1, func(ctx context.Context, params any) error {
 		called = true
-		receivedParams = params
 		return nil
 	})
 
-	RegisterFunc(testFuncID2, func(ctx context.Context, params map[string]any) error {
+	RegisterFunc(testFuncID2, func(ctx context.Context, params any) error {
 		called = true
-		receivedParams = params
 		return nil
 	})
 
-	RegisterFunc(testFuncID3, func(ctx context.Context, params map[string]any) error {
+	RegisterFunc(testFuncID3, func(ctx context.Context, params any) error {
 		callCount++
-		receivedParams = params
 		return nil
 	})
 }

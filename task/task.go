@@ -32,17 +32,20 @@ type Task interface {
 	SetNextExecTime(time.Time)     // 设置下次执行时间
 	ResetRetry()                   // 重置重试次数
 	UpdateNextExecTime()           // 更新下次执行时间（主要用于周期任务）
+	FuncID() FuncID                // 获取任务执行函数标识符
+	Params() any                   // 获取任务通用参数
+	CronExpr() string              // 获取cron任务表达式
 }
 
 // BaseTask 任务基础结构，包含所有任务的通用字段
 type BaseTask struct {
-	id           string         // 任务唯一标识
-	timeout      time.Duration  // 任务超时时间
-	retryPolicy  *RetryPolicy   // 重试策略
-	nextExecTime time.Time      // 下次执行时间
-	taskType     TaskType       // 任务类型
-	funcID       FuncID         // 任务执行函数标识符
-	params       map[string]any // 任务通用参数
+	id           string        // 任务唯一标识
+	timeout      time.Duration // 任务超时时间
+	retryPolicy  *RetryPolicy  // 重试策略
+	nextExecTime time.Time     // 下次执行时间
+	taskType     TaskType      // 任务类型
+	funcID       FuncID        // 任务执行函数标识符
+	params       any           // 任务通用参数
 }
 
 // ID 获取任务ID
@@ -85,6 +88,21 @@ func (b *BaseTask) ResetRetry() {
 // UpdateNextExecTime 更新下次执行时间
 // 基础任务不实现此方法，由具体任务类型实现
 func (b *BaseTask) UpdateNextExecTime() {
+}
+
+// CronExpr 获取cron任务表达式
+func (b *BaseTask) CronExpr() string {
+	return ""
+}
+
+// FuncID 获取任务执行函数标识符
+func (b *BaseTask) FuncID() FuncID {
+	return b.funcID
+}
+
+// Params 获取任务通用参数
+func (b *BaseTask) Params() any {
+	return b.params
 }
 
 // Run 执行任务

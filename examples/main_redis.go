@@ -1,0 +1,74 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/hangter-lt/task-scheduler/executor"
+	"github.com/hangter-lt/task-scheduler/persistence"
+	"github.com/hangter-lt/task-scheduler/scheduler"
+	"github.com/hangter-lt/task-scheduler/task"
+)
+
+func main() {
+
+	type TestParams struct {
+		Name  string `json:"name"`
+		Value int    `json:"value"`
+	}
+
+	// 注册任务函数
+	task.RegisterFunc("redis-example-func", func(ctx context.Context, params any) error {
+		testParams := params.(TestParams)
+		fmt.Printf("执行任务 %s, 值: %d\n", testParams.Name, testParams.Value)
+		return nil
+	})
+
+	// 创建执行器
+	exec, err := executor.NewExecutor(10)
+	if err != nil {
+		panic(err)
+	}
+	defer exec.Release()
+
+	// 创建Redis持久化层
+	redisPersistence := persistence.NewRedisPersistence("localhost:6379", "", 2)
+
+	// 创建带有Redis持久化的调度器
+	sch := scheduler.NewSchedulerWithPersistence(exec, redisPersistence)
+
+	// 启动调度器
+	go sch.Run()
+
+	// 注册一个周期任务，每秒执行一次
+	cronParams := TestParams{Name: "redis-cron-task", Value: 1}
+	cron := task.NewCronTask("redis-cron-1", "*/1 * * * * *", time.Minute*1, nil, "redis-example-func", cronParams)
+
+	// 注册一个单次任务，1秒后执行
+	// onceParams := map[string]any{"name": "redis-once-task", "value": 2}
+	// once := task.NewOnceTask("redis-once-1", time.Now().Add(time.Second*1), time.Minute*1, nil, "redis-example-func", onceParams)
+
+	// 注册任务
+	sch.Register(cron)
+	// sch.Register(once)
+
+	fmt.Println("任务已注册，等待执行...")
+
+	// 等待任务执行
+	time.Sleep(time.Second * 5)
+
+	// 取消周期任务
+	fmt.Println("取消周期任务...")
+	sch.Cancel("redis-cron-1")
+
+	// 等待一段时间
+	time.Sleep(time.Second * 2)
+
+	// 恢复周期任务
+	fmt.Println("恢复周期任务...")
+	sch.Resume("redis-cron-1")
+
+	// 无限等待，观察任务执行
+	select {}
+}

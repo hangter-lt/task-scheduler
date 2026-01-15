@@ -15,17 +15,13 @@ func NewOnceTask(
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
 	funcID FuncID,
-	params map[string]any,
+	params any,
 ) *OnceTask {
 	if retryPolicy == nil {
 		retryPolicy = &RetryPolicy{
 			MaxRetry:   0,
 			RetryDelay: 0,
 		}
-	}
-
-	if params == nil {
-		params = map[string]any{}
 	}
 
 	return &OnceTask{

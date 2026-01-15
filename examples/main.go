@@ -9,12 +9,9 @@ import (
 	"github.com/hangter-lt/task-scheduler/task"
 )
 
-func main() {
+func main_old() {
 	// 注册任务函数
-	task.RegisterFunc("example-func-1", func(ctx context.Context, params map[string]any) error {
-		name := params["name"].(string)
-		value := params["value"].(int)
-		println("执行任务:", name, "值:", value)
+	task.RegisterFunc("example-func-1", func(ctx context.Context, params any) error {
 		return nil
 	})
 

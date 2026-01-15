@@ -1,0 +1,142 @@
+package persistence
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/go-redis/redis/v8"
+	"github.com/hangter-lt/task-scheduler/task"
+)
+
+// RedisPersistence Redis持久化实现
+type RedisPersistence struct {
+	client *redis.Client
+	ctx    context.Context
+}
+
+// NewRedisPersistence 创建新的Redis持久化实例
+func NewRedisPersistence(addr string, password string, db int) *RedisPersistence {
+	client := redis.NewClient(&redis.Options{
+		Addr:     addr,
+		Password: password,
+		DB:       db,
+	})
+
+	return &RedisPersistence{
+		client: client,
+		ctx:    context.Background(),
+	}
+}
+
+// SaveTask 保存任务到Redis
+func (r *RedisPersistence) SaveTask(t task.Task) error {
+	// 创建任务数据映射
+	taskData := make(map[string]interface{})
+
+	// 保存基本任务信息
+	taskData["id"] = t.ID()
+	taskData["taskType"] = t.Type()
+	taskData["nextExecTime"] = t.NextExecTime()
+	taskData["timeout"] = t.Timeout()
+	taskData["retryPolicy"] = t.RetryPolicy()
+	taskData["funcID"] = t.FuncID()
+	taskData["params"] = t.Params()
+
+	// 根据任务类型保存额外字段
+	if t.Type() == task.TaskTypeCron {
+		taskData["cronExpr"] = t.CronExpr()
+	}
+	fmt.Printf("taskData: %v\n", taskData)
+
+	// 序列化任务数据
+	data, err := json.Marshal(taskData)
+	if err != nil {
+		return err
+	}
+
+	// 保存到Redis
+	return r.client.Set(r.ctx, "task:"+t.ID(), data, 0).Err()
+}
+
+// LoadTask 从Redis加载任务
+func (r *RedisPersistence) LoadTask(id string) (task.Task, error) {
+	// 从Redis获取任务数据
+	data, err := r.client.Get(r.ctx, "task:"+id).Bytes()
+	if err != nil {
+		return nil, err
+	}
+	fmt.Printf("data: %v\n", string(data))
+
+	// 反序列化任务数据
+	var taskData map[string]any
+	if err := json.Unmarshal(data, &taskData); err != nil {
+		return nil, err
+	}
+
+	// 根据任务类型重建任务对象
+	taskType := task.TaskType(taskData["taskType"].(string))
+	var retryPolicy task.RetryPolicy
+	retryPolicyB, err := json.Marshal(taskData["retryPolicy"])
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(retryPolicyB, &retryPolicy); err != nil {
+		return nil, err
+	}
+	switch taskType {
+	case task.TaskTypeOnce:
+		return task.NewOnceTask(
+			taskData["id"].(string),
+			taskData["nextExecTime"].(time.Time),
+			time.Duration(int(taskData["timeout"].(float64))),
+			&retryPolicy,
+			task.FuncID(taskData["funcID"].(string)),
+			taskData["params"].(map[string]any),
+		), nil
+	case task.TaskTypeCron:
+		return task.NewCronTask(
+			taskData["id"].(string),
+			taskData["cronExpr"].(string),
+			time.Duration(int(taskData["timeout"].(float64))),
+			&retryPolicy,
+			task.FuncID(taskData["funcID"].(string)),
+			taskData["params"].(map[string]any),
+		), nil
+	default:
+		return nil, fmt.Errorf("unknown task type: %s", taskType)
+	}
+}
+
+// LoadAllTasks 加载所有任务
+func (r *RedisPersistence) LoadAllTasks() ([]task.Task, error) {
+	// 查找所有任务键
+	keys, err := r.client.Keys(r.ctx, "task:*").Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// 加载所有任务
+	tasks := make([]task.Task, 0, len(keys))
+	for _, key := range keys {
+		id := key[5:] // 移除"task:"前缀
+		t, err := r.LoadTask(id)
+		if err != nil {
+			continue
+		}
+		tasks = append(tasks, t)
+	}
+
+	return tasks, nil
+}
+
+// DeleteTask 从Redis删除任务
+func (r *RedisPersistence) DeleteTask(id string) error {
+	return r.client.Del(r.ctx, "task:"+id).Err()
+}
+
+// Close 关闭Redis连接
+func (r *RedisPersistence) Close() error {
+	return r.client.Close()
+}

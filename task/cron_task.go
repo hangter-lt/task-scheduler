@@ -20,7 +20,7 @@ func NewCronTask(
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
 	funcID FuncID,
-	params map[string]any,
+	params any,
 ) *CronTask {
 	if retryPolicy == nil {
 		retryPolicy = &RetryPolicy{
@@ -36,10 +36,6 @@ func NewCronTask(
 		panic(fmt.Errorf("failed to parse cron expression %s: %w", cronExpr, err))
 	}
 	nextExec := schedule.Next(time.Now())
-
-	if params == nil {
-		params = make(map[string]any)
-	}
 
 	return &CronTask{
 		BaseTask: BaseTask{
@@ -65,4 +61,8 @@ func (c *CronTask) UpdateNextExecTime() {
 	}
 	nextExec := schedule.Next(time.Now())
 	c.SetNextExecTime(nextExec)
+}
+
+func (c *CronTask) CronExpr() string {
+	return c.cronExpr
 }

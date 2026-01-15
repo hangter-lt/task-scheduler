@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/hangter-lt/task-scheduler/task"
+	"github.com/robfig/cron/v3"
 )
 
 func TestExecutor(t *testing.T) {
@@ -28,7 +29,7 @@ func TestExecutor(t *testing.T) {
 		testTask := &mockTask{
 			id:      string(rune('a' + i)),
 			timeout: time.Second,
-			runFunc: func(ctx context.Context, params map[string]any) error {
+			runFunc: func(ctx context.Context, params any) error {
 				time.Sleep(time.Millisecond * 100)
 				wg.Done()
 				return nil
@@ -63,7 +64,7 @@ func TestExecutorTimeout(t *testing.T) {
 	testTask := &mockTask{
 		id:      "timeout-task",
 		timeout: time.Millisecond * 100,
-		runFunc: func(ctx context.Context, params map[string]any) error {
+		runFunc: func(ctx context.Context, params any) error {
 			// 在任务执行过程中检查上下文
 			for i := 0; i < 20; i++ {
 				select {
@@ -126,7 +127,7 @@ func TestExecutorPanic(t *testing.T) {
 	testTask := &mockTask{
 		id:      "panic-task",
 		timeout: time.Second,
-		runFunc: func(ctx context.Context, params map[string]any) error {
+		runFunc: func(ctx context.Context, params any) error {
 			panic("test panic")
 		},
 	}
@@ -172,7 +173,7 @@ func TestExecutorContextCancel(t *testing.T) {
 	testTask := &mockTask{
 		id:      "cancel-task",
 		timeout: time.Second,
-		runFunc: func(ctx context.Context, params map[string]any) error {
+		runFunc: func(ctx context.Context, params any) error {
 			time.Sleep(time.Second * 2) // 长时间运行
 			return nil
 		},
@@ -230,8 +231,8 @@ func TestExecutorWithParams(t *testing.T) {
 	testTask := &mockTask{
 		id:      "param-task",
 		timeout: time.Second,
-		runFunc: func(ctx context.Context, params map[string]any) error {
-			receivedParams = params
+		runFunc: func(ctx context.Context, params any) error {
+			receivedParams = params.(map[string]any)
 			return nil
 		},
 	}
@@ -278,7 +279,7 @@ func TestExecutorRelease(t *testing.T) {
 	testTask := &mockTask{
 		id:      "release-task",
 		timeout: time.Second,
-		runFunc: func(ctx context.Context, params map[string]any) error {
+		runFunc: func(ctx context.Context, params any) error {
 			return nil
 		},
 	}
@@ -297,7 +298,7 @@ func TestExecutorRelease(t *testing.T) {
 type mockTask struct {
 	id      string
 	timeout time.Duration
-	runFunc func(ctx context.Context, params map[string]any) error
+	runFunc func(ctx context.Context, params any) error
 }
 
 func (m *mockTask) ID() string {
@@ -329,3 +330,19 @@ func (m *mockTask) SetNextExecTime(t time.Time) {}
 func (m *mockTask) ResetRetry() {}
 
 func (m *mockTask) UpdateNextExecTime() {}
+
+func (m *mockTask) FuncID() task.FuncID {
+	return task.FuncID("mock-run")
+}
+
+func (m *mockTask) Params() any {
+	return nil
+}
+
+func (m *mockTask) CronExpr() string {
+	return ""
+}
+
+func (m *mockTask) CronParser() *cron.Parser {
+	return nil
+}
