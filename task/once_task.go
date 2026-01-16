@@ -33,6 +33,7 @@ func NewOnceTask(
 			taskType:     TaskTypeOnce,
 			funcID:       funcID,
 			params:       params,
+			status:       TaskStatusPending,
 		},
 	}
 }

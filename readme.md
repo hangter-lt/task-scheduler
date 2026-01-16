@@ -8,6 +8,8 @@
 - 支持多种任务类型（一次性、立即执行、Cron）
 - 支持任务超时和自动重试
 - 高并发设计，支持大量任务调度
+- 支持Redis持久化
+- 支持分布式任务调度，确保任务执行唯一性
 - 易于集成到现有项目中
 
 ## 项目结构
@@ -17,7 +19,11 @@
 │   ├── executor.go
 │   └── executor_test.go
 ├── examples/       # 示例代码
-│   ├── main.go
+│   ├── multi/          # 分布式示例
+│   ├── simple/         # 基本示例
+│   └── simple_redis/   # Redis持久化示例
+├── persistence/    # 持久化层，支持Redis
+│   └── redis.go
 ├── scheduler/      # 调度器，负责调度任务
 │   ├── heap.go
 │   ├── scheduler.go
@@ -59,9 +65,12 @@
 - 自动处理任务的超时和重试
 - 支持优雅关闭
 - 支持Redis持久化
+- 支持分布式任务调度，确保任务执行唯一性
+- 任务状态管理（Pending、Running、Completed、Canceled、Failed）
 
 #### API
 - `NewScheduler(exec *executor.Executor) *Scheduler` - 创建一个新的调度器
+- `NewSchedulerWithPersistence(exec *executor.Executor, persistence *persistence.RedisPersistence, nodeFlag string) *Scheduler` - 创建带有Redis持久化的调度器
 - `Register(t task.Task)` - 注册任务到调度器
 - `Cancel(id string)` - 取消指定ID的任务
 - `Resume(id string)` - 恢复已取消的任务
@@ -104,6 +113,25 @@
 - `RegisterFunc(id FuncID, f HandleFunc)` - 注册任务执行函数
 - `GetFunc(id FuncID) (HandleFunc, bool)` - 根据ID获取任务执行函数
 
+### 5. 持久化层（Persistence）
+
+持久化层负责将任务状态持久化到Redis，支持分布式任务调度和任务状态的持久化。
+
+#### 主要功能
+- 支持任务的保存、加载和删除
+- 提供分布式锁机制，确保任务执行唯一性
+- 支持任务状态的持久化
+- 支持多节点环境下的任务协调
+
+#### API
+- `NewRedisPersistence(addr string, password string, db int) *RedisPersistence` - 创建Redis持久化实例
+- `SaveTask(t task.Task) error` - 保存任务到Redis
+- `LoadTask(id string) (task.Task, error)` - 从Redis加载任务
+- `LoadAllTasks() ([]task.Task, error)` - 加载所有任务
+- `DeleteTask(id string) error` - 从Redis删除任务
+- `AcquireLock(taskID string, expire time.Duration, nodeFlag string) (bool, error)` - 获取分布式锁
+- `ReleaseLock(taskID string, nodeFlag string) error` - 释放分布式锁
+
 
 ## 快速开始
 
@@ -117,7 +145,17 @@ go get -u github.com/hangter-lt/task-scheduler
 
 #### 基本示例
 ```bash
-go run examples/main.go
+go run examples/simple/main.go
+```
+
+#### Redis持久化示例
+```bash
+go run examples/simple_redis/main.go
+```
+
+#### 分布式调度示例
+```bash
+go run examples/multi/main.go
 ```
 
 ### 基本使用
@@ -254,7 +292,7 @@ cronTask := task.NewCronTask(
 )
 ```
 
-### 任务取消
+### 任务取消与恢复
 
 可以通过任务ID取消正在等待执行的任务。
 
@@ -286,6 +324,65 @@ sch.Resume("task-id")
 - 保持任务的原有属性和配置
 - 线程安全，支持并发操作
 
+### Redis持久化
+
+通过Redis持久化，可以在服务重启后恢复任务状态，支持分布式部署。
+
+```go
+import (
+    "github.com/hangter-lt/task-scheduler/persistence"
+)
+
+// 创建Redis持久化层
+redisPersistence := persistence.NewRedisPersistence("localhost:6379", "", 0)
+
+// 创建带有Redis持久化的调度器
+sch := scheduler.NewSchedulerWithPersistence(exec, redisPersistence, "node-1")
+```
+
+### 分布式任务调度
+
+在多节点环境下，通过分布式锁确保任务执行的唯一性。
+
+```go
+// 在不同节点上创建调度器，使用不同的nodeFlag
+// 节点1
+sch1 := scheduler.NewSchedulerWithPersistence(exec1, redisPersistence, "node-1")
+
+// 节点2
+sch2 := scheduler.NewSchedulerWithPersistence(exec2, redisPersistence, "node-2")
+
+// 两个节点都会尝试执行任务，但只有一个能获取到锁并执行
+// 周期性任务即使抢锁失败，也会重新加入调度队列，不会丢失
+```
+
+### 分布式锁机制
+
+分布式锁确保同一任务在同一时间只能被一个节点执行：
+
+- **锁值设计**：包含节点标识和时间戳，确保锁的唯一性
+- **过期时间**：默认3分钟，可根据任务超时时间自动调整
+- **原子解锁**：使用Lua脚本确保解锁操作的原子性
+- **安全解锁**：只有持有锁的节点才能释放锁，避免误删
+
+### 任务状态管理
+
+任务具有以下状态：
+
+- **Pending**：待执行状态，任务等待执行
+- **Running**：执行中状态，任务正在执行
+- **Completed**：已完成状态，一次性任务执行完成
+- **Canceled**：已取消状态，任务被手动取消
+- **Failed**：执行失败状态，任务执行失败且重试次数用尽
+
+状态转换流程：
+1. 任务创建 → Pending
+2. 开始执行 → Running
+3. 执行成功 → Completed（一次性任务）/ Pending（周期性任务）
+4. 执行失败 → Pending（有重试次数）/ Failed（无重试次数）
+5. 手动取消 → Canceled
+6. 恢复任务 → Pending
+
 ## 运行测试
 
 ```bash
@@ -315,7 +412,7 @@ go test ./...
 - [x] 针对已取消的cron任务,增加恢复功能
 - [x] 记录重试后仍失败的任务
 - [x] 支持任务持久化(redis缓存,记录待执行任务和一段时间内完成的任务)
-- [ ] 支持分布式任务调度
+- [x] 支持分布式任务调度
 - [ ] 支持任务查询(待执行任务,失败任务,已取消任务,已执行任务(一段时间内))
 - [ ] 支持任务优先级
 

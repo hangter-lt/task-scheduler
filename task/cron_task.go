@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -46,6 +47,7 @@ func NewCronTask(
 			taskType:     TaskTypeCron,
 			funcID:       funcID,
 			params:       params,
+			status:       TaskStatusPending,
 		},
 		cronExpr:   cronExpr,
 		cronParser: parser,
@@ -56,7 +58,7 @@ func (c *CronTask) UpdateNextExecTime() {
 	schedule, err := c.cronParser.Parse(c.cronExpr)
 	if err != nil {
 		// 记录日志
-		fmt.Printf("Failed to parse cron expression %s: %v\n", c.cronExpr, err)
+		log.Printf("Failed to parse cron expression %s: %v\n", c.cronExpr, err)
 		return
 	}
 	nextExec := schedule.Next(time.Now())

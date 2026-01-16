@@ -346,3 +346,11 @@ func (m *mockTask) CronExpr() string {
 func (m *mockTask) CronParser() *cron.Parser {
 	return nil
 }
+
+func (m *mockTask) Status() task.TaskStatus {
+	return task.TaskStatusPending
+}
+
+func (m *mockTask) SetStatus(status task.TaskStatus) {
+	// 模拟实现，不做实际操作
+}

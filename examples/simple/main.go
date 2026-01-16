@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/hangter-lt/task-scheduler/executor"
@@ -9,9 +10,10 @@ import (
 	"github.com/hangter-lt/task-scheduler/task"
 )
 
-func main_old() {
+func main() {
 	// 注册任务函数
 	task.RegisterFunc("example-func-1", func(ctx context.Context, params any) error {
+		fmt.Printf("params: %v\n", params)
 		return nil
 	})
 

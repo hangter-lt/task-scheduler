@@ -14,6 +14,16 @@ const (
 	TaskTypeCron TaskType = "cron" // Cron任务，按表达式周期性执行
 )
 
+// TaskStatus 任务状态枚举
+type TaskStatus string
+
+const (
+	TaskStatusPending   TaskStatus = "pending"   // 待执行
+	TaskStatusRunning   TaskStatus = "running"   // 执行中
+	TaskStatusCompleted TaskStatus = "completed" // 已完成（一次性任务独有）
+	TaskStatusCanceled  TaskStatus = "canceled"  // 已取消
+)
+
 // RetryPolicy 任务重试策略
 type RetryPolicy struct {
 	MaxRetry     int           // 最大重试次数，0表示不重试
@@ -25,11 +35,13 @@ type RetryPolicy struct {
 type Task interface {
 	ID() string                    // 获取任务ID
 	Type() TaskType                // 获取任务类型(once/cron)
+	Status() TaskStatus            // 获取任务状态
 	NextExecTime() time.Time       // 获取下次执行时间
 	Run(ctx context.Context) error // 执行任务
 	Timeout() time.Duration        // 获取任务超时时间
 	RetryPolicy() *RetryPolicy     // 获取重试策略
 	SetNextExecTime(time.Time)     // 设置下次执行时间
+	SetStatus(TaskStatus)          // 设置任务状态
 	ResetRetry()                   // 重置重试次数
 	UpdateNextExecTime()           // 更新下次执行时间（主要用于周期任务）
 	FuncID() FuncID                // 获取任务执行函数标识符
@@ -46,6 +58,7 @@ type BaseTask struct {
 	taskType     TaskType      // 任务类型
 	funcID       FuncID        // 任务执行函数标识符
 	params       any           // 任务通用参数
+	status       TaskStatus    // 任务状态
 }
 
 // ID 获取任务ID
@@ -103,6 +116,16 @@ func (b *BaseTask) FuncID() FuncID {
 // Params 获取任务通用参数
 func (b *BaseTask) Params() any {
 	return b.params
+}
+
+// Status 获取任务状态
+func (b *BaseTask) Status() TaskStatus {
+	return b.status
+}
+
+// SetStatus 设置任务状态
+func (b *BaseTask) SetStatus(status TaskStatus) {
+	b.status = status
 }
 
 // Run 执行任务

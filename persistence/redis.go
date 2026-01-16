@@ -30,6 +30,37 @@ func NewRedisPersistence(addr string, password string, db int) *RedisPersistence
 	}
 }
 
+// AcquireLock 获取分布式锁
+// taskID: 任务ID
+// expire: 锁过期时间
+// 返回值: 是否获取成功
+func (r *RedisPersistence) AcquireLock(taskID string, expire time.Duration, nodeFlag string) (bool, error) {
+	key := "lock:" + taskID
+
+	// 使用SETNX命令获取锁
+	return r.client.SetNX(r.ctx, key, nodeFlag, expire).Result()
+}
+
+// ReleaseLock 释放分布式锁
+// taskID: 任务ID
+// 使用Lua脚本确保解锁的原子性
+func (r *RedisPersistence) ReleaseLock(taskID string, nodeFlag string) error {
+	key := "lock:" + taskID
+
+	// Lua脚本：只有当锁值匹配当前节点ID时才删除锁
+	luaScript := `
+	if redis.call("get", KEYS[1]) == ARGV[1] then
+		return redis.call("del", KEYS[1])
+	else
+		return 0
+	end
+	`
+
+	// 执行Lua脚本
+	_, err := r.client.Eval(r.ctx, luaScript, []string{key}, nodeFlag).Result()
+	return err
+}
+
 // SaveTask 保存任务到Redis
 func (r *RedisPersistence) SaveTask(t task.Task) error {
 	// 创建任务数据映射
@@ -38,6 +69,7 @@ func (r *RedisPersistence) SaveTask(t task.Task) error {
 	// 保存基本任务信息
 	taskData["id"] = t.ID()
 	taskData["taskType"] = t.Type()
+	taskData["status"] = t.Status()
 	taskData["nextExecTime"] = t.NextExecTime()
 	taskData["timeout"] = t.Timeout()
 	taskData["retryPolicy"] = t.RetryPolicy()
@@ -48,7 +80,6 @@ func (r *RedisPersistence) SaveTask(t task.Task) error {
 	if t.Type() == task.TaskTypeCron {
 		taskData["cronExpr"] = t.CronExpr()
 	}
-	fmt.Printf("taskData: %v\n", taskData)
 
 	// 序列化任务数据
 	data, err := json.Marshal(taskData)
@@ -67,7 +98,6 @@ func (r *RedisPersistence) LoadTask(id string) (task.Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("data: %v\n", string(data))
 
 	// 反序列化任务数据
 	var taskData map[string]any
@@ -85,28 +115,45 @@ func (r *RedisPersistence) LoadTask(id string) (task.Task, error) {
 	if err := json.Unmarshal(retryPolicyB, &retryPolicy); err != nil {
 		return nil, err
 	}
+
+	// 获取任务状态，如果不存在则设置默认值
+	status := task.TaskStatusPending
+	if statusVal, ok := taskData["status"]; ok {
+		if statusStr, ok := statusVal.(string); ok {
+			status = task.TaskStatus(statusStr)
+		}
+	}
+
+	var t task.Task
+
 	switch taskType {
 	case task.TaskTypeOnce:
-		return task.NewOnceTask(
+		execTime, _ := time.Parse(time.RFC3339, taskData["nextExecTime"].(string))
+		t = task.NewOnceTask(
 			taskData["id"].(string),
-			taskData["nextExecTime"].(time.Time),
+			execTime,
 			time.Duration(int(taskData["timeout"].(float64))),
 			&retryPolicy,
 			task.FuncID(taskData["funcID"].(string)),
 			taskData["params"].(map[string]any),
-		), nil
+		)
 	case task.TaskTypeCron:
-		return task.NewCronTask(
+		t = task.NewCronTask(
 			taskData["id"].(string),
 			taskData["cronExpr"].(string),
 			time.Duration(int(taskData["timeout"].(float64))),
 			&retryPolicy,
 			task.FuncID(taskData["funcID"].(string)),
 			taskData["params"].(map[string]any),
-		), nil
+		)
 	default:
 		return nil, fmt.Errorf("unknown task type: %s", taskType)
 	}
+
+	// 设置任务状态
+	t.SetStatus(status)
+
+	return t, nil
 }
 
 // LoadAllTasks 加载所有任务

@@ -3,9 +3,11 @@ package scheduler
 import (
 	"container/heap"
 	"context"
+	"log"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hangter-lt/task-scheduler/executor"
 	"github.com/hangter-lt/task-scheduler/persistence"
 	"github.com/hangter-lt/task-scheduler/task"
@@ -21,6 +23,7 @@ type Scheduler struct {
 	stopCh         chan struct{}                 // 停止信号通道，用于优雅关闭调度器
 	isRunning      bool                          // 运行状态标志
 	persistence    *persistence.RedisPersistence // Redis持久化层
+	nodeFlag       string                        // 节点标识
 }
 
 // NewScheduler 创建一个新的任务调度器
@@ -37,26 +40,42 @@ func NewScheduler(exec *executor.Executor) *Scheduler {
 		executor:       exec,
 		stopCh:         make(chan struct{}),
 		isRunning:      false,
-		persistence:    nil,
 	}
 }
 
 // NewSchedulerWithPersistence 创建一个带有Redis持久化的任务调度器
 // exec: 关联的任务执行器
 // persistence: Redis持久化层
-func NewSchedulerWithPersistence(exec *executor.Executor, persistence *persistence.RedisPersistence) *Scheduler {
-	s := NewScheduler(exec)
-	s.persistence = persistence
+func NewSchedulerWithPersistence(exec *executor.Executor, persistence *persistence.RedisPersistence, nodeFlag string) *Scheduler {
+
+	h := &TaskHeap{}
+	heap.Init(h)
+
+	s := &Scheduler{
+		heap:           h,
+		taskMap:        make(map[string]task.Task),
+		cancelledTasks: make(map[string]task.Task),
+		mu:             sync.Mutex{},
+		executor:       exec,
+		stopCh:         make(chan struct{}),
+		isRunning:      false,
+		nodeFlag:       nodeFlag + "-" + uuid.New().String(),
+		persistence:    persistence,
+	}
+
 	// 从Redis加载所有任务
 	if persistence != nil {
 		tasks, err := persistence.LoadAllTasks()
 		if err == nil {
 			for _, t := range tasks {
-				s.taskMap[t.ID()] = t
-				heap.Push(s.heap, t)
+				if t.Status() == task.TaskStatusPending || t.Status() == task.TaskStatusRunning {
+					s.taskMap[t.ID()] = t
+					heap.Push(s.heap, t)
+				}
 			}
 		}
 	}
+
 	return s
 }
 
@@ -65,6 +84,12 @@ func NewSchedulerWithPersistence(exec *executor.Executor, persistence *persisten
 func (s *Scheduler) Register(t task.Task) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// 跳过超过时间的一次性任务
+	if t.Type() == task.TaskTypeOnce && t.NextExecTime().Before(time.Now()) {
+		log.Printf("一次性任务 %s 已过期，跳过注册", t.ID())
+		return
+	}
 
 	// 检查任务是否已存在
 	if _, ok := s.taskMap[t.ID()]; ok {
@@ -110,13 +135,15 @@ func (s *Scheduler) Cancel(id string) {
 		}
 	}
 
+	t.SetStatus(task.TaskStatusCanceled)
 	// 将任务保存到已取消任务映射中
 	s.cancelledTasks[id] = t
 
 	// 从Redis中删除任务
 	if s.persistence != nil {
-		s.persistence.DeleteTask(id)
+		s.persistence.SaveTask(t)
 	}
+
 }
 
 // Resume 恢复已取消的任务
@@ -144,6 +171,8 @@ func (s *Scheduler) Resume(id string) {
 			t.UpdateNextExecTime()
 		}
 	}
+	// 设置任务状态为Pending
+	t.SetStatus(task.TaskStatusPending)
 
 	// 重新添加到任务队列
 	s.taskMap[id] = t
@@ -217,6 +246,53 @@ func (s *Scheduler) Run() {
 // executeTask 执行任务
 // t: 要执行的任务
 func (s *Scheduler) executeTask(t task.Task) {
+	// 检查任务状态，只有Pending状态的任务才能执行
+	if t.Status() != task.TaskStatusPending {
+		// 任务状态不是Pending，对于周期性任务需要重新添加到堆中
+		s.resetCronTask(t)
+		return
+	}
+
+	// 尝试获取分布式锁
+	if s.persistence != nil {
+		// 设置锁过期时间为任务超时时间的2倍，确保任务有足够时间执行
+		lockExpire := t.Timeout() * 2
+		if lockExpire <= 0 {
+			// 如果任务没有超时设置，默认锁过期时间为3分钟
+			lockExpire = 3 * time.Minute
+		}
+
+		// 获取分布式锁
+		hasLock, err := s.persistence.AcquireLock(t.ID(), lockExpire, s.nodeFlag)
+		if err != nil {
+			// 锁获取失败，记录日志或进行其他处理
+			log.Printf("Failed to acquire lock for task %s: %v", t.ID(), err)
+			// 对于周期性任务需要重新添加到堆中
+			s.resetCronTask(t)
+			return
+		}
+
+		if !hasLock {
+			// 没有获取到锁，说明其他机器正在执行该任务
+			// 对于周期性任务需要重新添加到堆中
+			s.resetCronTask(t)
+			return
+		}
+
+		// 确保无论任务执行成功与否，都释放锁
+		defer func() {
+			s.persistence.ReleaseLock(t.ID(), s.nodeFlag)
+		}()
+	}
+
+	// 更新任务状态为Running
+	t.SetStatus(task.TaskStatusRunning)
+
+	// 保存任务状态到Redis
+	if s.persistence != nil {
+		s.persistence.SaveTask(t)
+	}
+
 	// 创建带超时的上下文
 	var (
 		ctx    context.Context
@@ -239,11 +315,26 @@ func (s *Scheduler) executeTask(t task.Task) {
 	})
 
 	if err != nil {
-		// TODO: redis记录失败信息,设置到期时间,到期后删除
 		// 提交任务失败
 		cancel()
 		s.handleTaskResult(t, err)
 	}
+}
+
+// 周期性任务重新入堆
+func (s *Scheduler) resetCronTask(t task.Task) {
+	s.mu.Lock()
+	if t.Type() == task.TaskTypeCron {
+		t.ResetRetry()
+		t.SetStatus(task.TaskStatusPending)
+		t.UpdateNextExecTime()
+		s.taskMap[t.ID()] = t
+		heap.Push(s.heap, t)
+		if s.persistence != nil {
+			s.persistence.SaveTask(t)
+		}
+	}
+	s.mu.Unlock()
 }
 
 // handleTaskResult 处理任务执行结果
@@ -261,6 +352,8 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error) {
 			// 计算重试执行时间（当前时间+重试间隔）
 			retryTime := time.Now().Add(t.RetryPolicy().RetryDelay)
 			t.SetNextExecTime(retryTime)
+			// 重置任务状态为Pending，准备重试
+			t.SetStatus(task.TaskStatusPending)
 			// 重新添加到任务队列
 			s.taskMap[t.ID()] = t
 			heap.Push(s.heap, t)
@@ -278,19 +371,20 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error) {
 	// 周期任务, 计算下次执行时间
 	if t.Type() == task.TaskTypeCron {
 		t.UpdateNextExecTime()
+		// 重置任务状态为Pending，准备下次执行
+		t.SetStatus(task.TaskStatusPending)
 		// 重新添加到任务队列
 		s.taskMap[t.ID()] = t
 		heap.Push(s.heap, t)
-		// 更新Redis中的任务状态
-		if s.persistence != nil {
-			s.persistence.SaveTask(t)
-		}
-		return
+	} else if t.Type() == task.TaskTypeOnce {
+		// 一次性任务执行完成，设置状态为Completed
+		t.SetStatus(task.TaskStatusCompleted)
+
 	}
 
-	// 一次性任务执行完成，从Redis中删除
+	// 保存完成状态到Redis
 	if s.persistence != nil {
-		s.persistence.DeleteTask(t.ID())
+		s.persistence.SaveTask(t)
 	}
 }
 
