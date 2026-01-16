@@ -2,9 +2,8 @@ package task
 
 import (
 	"fmt"
+	"log"
 	"time"
-
-	"github.com/hangter-lt/task-scheduler/types"
 
 	"github.com/robfig/cron/v3"
 )
@@ -21,8 +20,8 @@ func NewCronTask(
 	cronExpr string,
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
-	handleFunc types.HandleFunc,
-	params map[string]any,
+	funcID FuncID,
+	params any,
 ) *CronTask {
 	if retryPolicy == nil {
 		retryPolicy = &RetryPolicy{
@@ -39,19 +38,16 @@ func NewCronTask(
 	}
 	nextExec := schedule.Next(time.Now())
 
-	if params == nil {
-		params = make(map[string]any)
-	}
-
 	return &CronTask{
 		BaseTask: BaseTask{
 			id:           id,
 			timeout:      timeout,
 			retryPolicy:  retryPolicy,
 			nextExecTime: nextExec,
-			taskType:     types.TaskTypeCron,
-			handleFunc:   handleFunc,
+			taskType:     TaskTypeCron,
+			funcID:       funcID,
 			params:       params,
+			status:       TaskStatusPending,
 		},
 		cronExpr:   cronExpr,
 		cronParser: parser,
@@ -62,9 +58,13 @@ func (c *CronTask) UpdateNextExecTime() {
 	schedule, err := c.cronParser.Parse(c.cronExpr)
 	if err != nil {
 		// 记录日志
-		fmt.Printf("Failed to parse cron expression %s: %v\n", c.cronExpr, err)
+		log.Printf("Failed to parse cron expression %s: %v\n", c.cronExpr, err)
 		return
 	}
 	nextExec := schedule.Next(time.Now())
 	c.SetNextExecTime(nextExec)
+}
+
+func (c *CronTask) CronExpr() string {
+	return c.cronExpr
 }

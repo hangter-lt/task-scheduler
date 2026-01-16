@@ -4,9 +4,37 @@ import (
 	"context"
 	"testing"
 	"time"
-
-	"github.com/hangter-lt/task-scheduler/types"
 )
+
+// 测试用的函数定义
+var (
+	called         bool
+	receivedParams map[string]any
+	callCount      int
+
+	// 注册测试函数
+	testFuncID1 FuncID = "test-func-1"
+	testFuncID2 FuncID = "test-func-2"
+	testFuncID3 FuncID = "test-func-3"
+)
+
+// 初始化函数，注册测试函数
+func init() {
+	RegisterFunc(testFuncID1, func(ctx context.Context, params any) error {
+		called = true
+		return nil
+	})
+
+	RegisterFunc(testFuncID2, func(ctx context.Context, params any) error {
+		called = true
+		return nil
+	})
+
+	RegisterFunc(testFuncID3, func(ctx context.Context, params any) error {
+		callCount++
+		return nil
+	})
+}
 
 func TestBaseTask(t *testing.T) {
 	// 创建重试策略
@@ -22,7 +50,7 @@ func TestBaseTask(t *testing.T) {
 		timeout:      time.Second * 10,
 		retryPolicy:  retryPolicy,
 		nextExecTime: time.Now().Add(time.Minute),
-		taskType:     types.TaskTypeOnce,
+		taskType:     TaskTypeOnce,
 	}
 
 	// 测试 ID() 方法
@@ -31,7 +59,7 @@ func TestBaseTask(t *testing.T) {
 	}
 
 	// 测试 Type() 方法
-	if baseTask.Type() != types.TaskTypeOnce {
+	if baseTask.Type() != TaskTypeOnce {
 		t.Errorf("Expected task type 'once', got '%s'", baseTask.Type())
 	}
 
@@ -60,9 +88,9 @@ func TestBaseTask(t *testing.T) {
 }
 
 func TestOnceTask(t *testing.T) {
-	// 测试标志
-	called := false
-	var receivedParams map[string]any
+	// 重置测试标志
+	called = false
+	receivedParams = nil
 
 	// 创建测试参数
 	testParams := map[string]any{"name": "test-task", "value": 123}
@@ -74,11 +102,7 @@ func TestOnceTask(t *testing.T) {
 		execTime,
 		time.Second*5,
 		&RetryPolicy{MaxRetry: 2, RetryDelay: time.Second},
-		func(ctx context.Context, params map[string]any) error {
-			called = true
-			receivedParams = params
-			return nil
-		},
+		testFuncID1,
 		testParams,
 	)
 
@@ -87,7 +111,7 @@ func TestOnceTask(t *testing.T) {
 		t.Errorf("Expected task ID 'once-1', got '%s'", onceTask.ID())
 	}
 
-	if onceTask.Type() != types.TaskTypeOnce {
+	if onceTask.Type() != TaskTypeOnce {
 		t.Errorf("Expected task type 'once', got '%s'", onceTask.Type())
 	}
 
@@ -124,9 +148,9 @@ func TestOnceTask(t *testing.T) {
 }
 
 func TestNewImmediateTask(t *testing.T) {
-	// 测试标志
-	called := false
-	var receivedParams map[string]any
+	// 重置测试标志
+	called = false
+	receivedParams = nil
 
 	// 创建测试参数
 	testParams := map[string]any{"name": "immediate-task", "value": 456}
@@ -136,11 +160,7 @@ func TestNewImmediateTask(t *testing.T) {
 		"immediate-1",
 		time.Second*5,
 		&RetryPolicy{MaxRetry: 1, RetryDelay: time.Second},
-		func(ctx context.Context, params map[string]any) error {
-			called = true
-			receivedParams = params
-			return nil
-		},
+		testFuncID2,
 		testParams,
 	)
 
@@ -149,7 +169,7 @@ func TestNewImmediateTask(t *testing.T) {
 		t.Errorf("Expected task ID 'immediate-1', got '%s'", immediateTask.ID())
 	}
 
-	if immediateTask.Type() != types.TaskTypeOnce {
+	if immediateTask.Type() != TaskTypeOnce {
 		t.Errorf("Expected task type 'once', got '%s'", immediateTask.Type())
 	}
 
@@ -181,9 +201,9 @@ func TestNewImmediateTask(t *testing.T) {
 }
 
 func TestCronTask(t *testing.T) {
-	// 测试标志
-	callCount := 0
-	var receivedParams map[string]any
+	// 重置测试标志
+	callCount = 0
+	receivedParams = nil
 
 	// 创建测试参数
 	testParams := map[string]any{"name": "cron-task", "value": 789}
@@ -194,11 +214,7 @@ func TestCronTask(t *testing.T) {
 		"*/1 * * * * *",
 		time.Second*5,
 		&RetryPolicy{MaxRetry: 2, RetryDelay: time.Second},
-		func(ctx context.Context, params map[string]any) error {
-			callCount++
-			receivedParams = params
-			return nil
-		},
+		testFuncID3,
 		testParams,
 	)
 
@@ -207,7 +223,7 @@ func TestCronTask(t *testing.T) {
 		t.Errorf("Expected task ID 'cron-1', got '%s'", cronTask.ID())
 	}
 
-	if cronTask.Type() != types.TaskTypeCron {
+	if cronTask.Type() != TaskTypeCron {
 		t.Errorf("Expected task type 'cron', got '%s'", cronTask.Type())
 	}
 
@@ -250,8 +266,8 @@ func TestCronTask(t *testing.T) {
 }
 
 func TestTaskWithNilParams(t *testing.T) {
-	// 测试标志
-	called := false
+	// 重置测试标志
+	called = false
 
 	// 创建没有参数的任务
 	onceTask := NewOnceTask(
@@ -259,17 +275,7 @@ func TestTaskWithNilParams(t *testing.T) {
 		time.Now().Add(time.Second),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			called = true
-			// 验证nil参数会被转换为空map
-			if params == nil {
-				t.Error("Expected params to be empty map, got nil")
-			}
-			if len(params) != 0 {
-				t.Errorf("Expected params to be empty, got %v", params)
-			}
-			return nil
-		},
+		testFuncID1,
 		nil, // 传递nil参数
 	)
 
@@ -284,15 +290,16 @@ func TestTaskWithNilParams(t *testing.T) {
 }
 
 func TestTaskWithNilRetryPolicy(t *testing.T) {
+	// 重置测试标志
+	called = false
+
 	// 创建没有重试策略的任务
 	onceTask := NewOnceTask(
 		"once-nil-retry",
 		time.Now().Add(time.Second),
 		time.Second*5,
 		nil, // 传递nil重试策略
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		testFuncID1,
 		map[string]any{},
 	)
 
@@ -310,5 +317,14 @@ func TestTaskWithNilRetryPolicy(t *testing.T) {
 		if retryPolicy.CurrentRetry != 0 {
 			t.Errorf("Expected default CurrentRetry to be 0, got %d", retryPolicy.CurrentRetry)
 		}
+	}
+
+	// 测试 Run() 方法
+	if err := onceTask.Run(context.Background()); err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	if !called {
+		t.Error("Expected task function to be called")
 	}
 }

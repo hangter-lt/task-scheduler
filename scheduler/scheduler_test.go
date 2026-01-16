@@ -11,6 +11,18 @@ import (
 	"github.com/hangter-lt/task-scheduler/task"
 )
 
+// 注册测试函数
+func init() {
+	// 注册测试函数，用于scheduler测试
+	task.RegisterFunc("scheduler-test-func-1", func(ctx context.Context, params any) error {
+		return nil
+	})
+
+	task.RegisterFunc("scheduler-test-func-2", func(ctx context.Context, params any) error {
+		return nil
+	})
+}
+
 func TestTaskHeap(t *testing.T) {
 	// 创建执行器
 	exec, err := executor.NewExecutor(5)
@@ -28,9 +40,7 @@ func TestTaskHeap(t *testing.T) {
 		time.Now().Add(time.Second*3),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -39,9 +49,7 @@ func TestTaskHeap(t *testing.T) {
 		time.Now().Add(time.Second*1),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -50,9 +58,7 @@ func TestTaskHeap(t *testing.T) {
 		time.Now().Add(time.Second*2),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -102,9 +108,7 @@ func TestSchedulerRegister(t *testing.T) {
 		time.Now().Add(time.Second),
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"scheduler-test-func-1",
 		map[string]any{},
 	)
 
@@ -147,9 +151,7 @@ func TestSchedulerCancel(t *testing.T) {
 		time.Now().Add(time.Second*5), // 5s 后执行
 		time.Second*5,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -194,11 +196,7 @@ func TestSchedulerOnceTaskExecution(t *testing.T) {
 		time.Now().Add(time.Millisecond*200), // 200ms 后执行
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			defer wg.Done()
-			taskExecuted = true
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -257,13 +255,7 @@ func TestSchedulerCronTaskExecution(t *testing.T) {
 		"*/1 * * * * *", // 每秒执行一次
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			callCount++
-			if callCount <= 2 {
-				wg.Done()
-			}
-			return nil
-		},
+		"",
 		map[string]any{},
 	)
 
@@ -357,11 +349,7 @@ func TestSchedulerTaskWithParams(t *testing.T) {
 		time.Now().Add(time.Millisecond*200),
 		0,
 		nil,
-		func(ctx context.Context, params map[string]any) error {
-			defer wg.Done()
-			receivedParams = params
-			return nil
-		},
+		"",
 		testParams,
 	)
 
@@ -390,5 +378,178 @@ func TestSchedulerTaskWithParams(t *testing.T) {
 		if receivedParams["value"] != 123 {
 			t.Errorf("Expected param 'value' to be 123, got %v", receivedParams["value"])
 		}
+	}
+}
+
+func TestSchedulerCronTaskResume(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 测试标志
+	var callCount int
+	var wg sync.WaitGroup
+	wg.Add(2) // 期望执行2次（恢复前后各1次）
+
+	// 创建周期性任务（每500ms执行一次）
+	cronTask := task.NewCronTask(
+		"cron-resume-test",
+		"*/1 * * * * *", // 每秒执行一次
+		0,
+		nil,
+		"",
+		map[string]any{},
+	)
+
+	// 注册任务
+	scheduler.Register(cronTask)
+
+	// 启动调度器
+	go scheduler.Run()
+
+	// 等待任务执行1次
+	time.Sleep(time.Second * 1)
+
+	// 取消任务
+	scheduler.Cancel("cron-resume-test")
+
+	// 验证任务已被取消
+	scheduler.mu.Lock()
+	if _, ok := scheduler.taskMap["cron-resume-test"]; ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be removed from taskMap after cancel")
+	}
+	if _, ok := scheduler.cancelledTasks["cron-resume-test"]; !ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be in cancelledTasks after cancel")
+	}
+	scheduler.mu.Unlock()
+
+	// 等待一段时间，确保任务不会执行
+	time.Sleep(time.Second * 1)
+
+	// 恢复任务
+	scheduler.Resume("cron-resume-test")
+
+	// 验证任务已被恢复
+	scheduler.mu.Lock()
+	if _, ok := scheduler.taskMap["cron-resume-test"]; !ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be in taskMap after resume")
+	}
+	if _, ok := scheduler.cancelledTasks["cron-resume-test"]; ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be removed from cancelledTasks after resume")
+	}
+	scheduler.mu.Unlock()
+
+	// 等待任务执行第2次
+	wg.Wait()
+
+	// 停止调度器
+	scheduler.Stop()
+
+	// 等待调度器完全停止
+	time.Sleep(time.Millisecond * 300)
+
+	// 验证任务至少执行了2次
+	if callCount < 2 {
+		t.Errorf("Expected cron task to be executed at least 2 times, got %d calls", callCount)
+	}
+
+	// 验证调度器已停止
+	if scheduler.IsRunning() {
+		t.Error("Expected scheduler to be stopped")
+	}
+}
+
+func TestSchedulerOnceTaskResume(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 测试标志
+	var taskExecuted bool
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	// 创建一次性任务（2秒后执行）
+	onceTask := task.NewOnceTask(
+		"once-resume-test",
+		time.Now().Add(time.Second*2),
+		0,
+		nil,
+		"",
+		map[string]any{},
+	)
+
+	// 注册任务
+	scheduler.Register(onceTask)
+
+	// 启动调度器
+	go scheduler.Run()
+
+	// 立即取消任务
+	scheduler.Cancel("once-resume-test")
+
+	// 验证任务已被取消
+	scheduler.mu.Lock()
+	if _, ok := scheduler.taskMap["once-resume-test"]; ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be removed from taskMap after cancel")
+	}
+	if _, ok := scheduler.cancelledTasks["once-resume-test"]; !ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be in cancelledTasks after cancel")
+	}
+	scheduler.mu.Unlock()
+
+	// 等待一段时间，确保任务不会执行
+	time.Sleep(time.Second * 1)
+
+	// 恢复任务
+	scheduler.Resume("once-resume-test")
+
+	// 验证任务已被恢复
+	scheduler.mu.Lock()
+	if _, ok := scheduler.taskMap["once-resume-test"]; !ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be in taskMap after resume")
+	}
+	if _, ok := scheduler.cancelledTasks["once-resume-test"]; ok {
+		scheduler.mu.Unlock()
+		t.Error("Expected task to be removed from cancelledTasks after resume")
+	}
+	scheduler.mu.Unlock()
+
+	// 等待任务执行
+	wg.Wait()
+
+	// 停止调度器
+	scheduler.Stop()
+
+	// 等待调度器完全停止
+	time.Sleep(time.Millisecond * 300)
+
+	// 验证任务已执行
+	if !taskExecuted {
+		t.Error("Expected once task to be executed after resume")
+	}
+
+	// 验证调度器已停止
+	if scheduler.IsRunning() {
+		t.Error("Expected scheduler to be stopped")
 	}
 }
