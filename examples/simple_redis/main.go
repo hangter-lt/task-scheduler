@@ -21,7 +21,7 @@ func main() {
 	// 注册任务函数
 	task.RegisterFunc("redis-example-func", func(ctx context.Context, params any) error {
 		fmt.Printf("params: %v\n", params)
-		return nil
+		return fmt.Errorf("simulated task failure")
 	})
 
 	// 创建执行器
@@ -50,7 +50,7 @@ func main() {
 	// if err != nil {
 	// 	panic(err)
 	// }
-	once := task.NewOnceTask("redis-once-1", time.Now().Add(time.Second*5), time.Minute*1, nil, "redis-example-func", onceParams)
+	once := task.NewOnceTask("redis-once-2", time.Now().Add(time.Second*5), time.Minute*1, nil, "redis-example-func", onceParams)
 
 	// 注册任务
 	sch.Register(cron)
@@ -71,6 +71,12 @@ func main() {
 	// 恢复周期任务
 	fmt.Println("恢复周期任务...")
 	sch.Resume("redis-cron-1")
+
+	// 测试失败记录
+	time.Sleep(time.Second * 10)
+	records := sch.GetFailureRecords("redis-cron-1")
+	// records := sch.GetAllFailureRecords()
+	fmt.Printf("records: %v\n", records)
 
 	// 无限等待，观察任务执行
 	select {}

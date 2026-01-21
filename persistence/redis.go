@@ -187,3 +187,61 @@ func (r *RedisPersistence) DeleteTask(id string) error {
 func (r *RedisPersistence) Close() error {
 	return r.client.Close()
 }
+
+// SaveFailureRecord 保存任务失败记录到Redis
+func (r *RedisPersistence) SaveFailureRecord(record task.FailureRecord) error {
+	// 序列化失败记录
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+
+	// 保存到Redis列表，使用taskId作为key的一部分
+	key := "failure:" + record.TaskID
+	return r.client.RPush(r.ctx, key, data).Err()
+}
+
+// LoadFailureRecords 加载任务的失败记录
+func (r *RedisPersistence) LoadFailureRecords(taskID string) ([]task.FailureRecord, error) {
+	key := "failure:" + taskID
+
+	// 从Redis获取所有失败记录
+	dataList, err := r.client.LRange(r.ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// 反序列化失败记录
+	records := make([]task.FailureRecord, 0, len(dataList))
+	for _, data := range dataList {
+		var record task.FailureRecord
+		if err := json.Unmarshal([]byte(data), &record); err != nil {
+			continue
+		}
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+// LoadAllFailureRecords 加载所有任务的失败记录
+func (r *RedisPersistence) LoadAllFailureRecords() (map[string][]task.FailureRecord, error) {
+	// 查找所有失败记录键
+	keys, err := r.client.Keys(r.ctx, "failure:*").Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// 加载所有失败记录
+	allRecords := make(map[string][]task.FailureRecord)
+	for _, key := range keys {
+		taskID := key[8:] // 移除"failure:"前缀
+		records, err := r.LoadFailureRecords(taskID)
+		if err != nil {
+			continue
+		}
+		allRecords[taskID] = records
+	}
+
+	return allRecords, nil
+}

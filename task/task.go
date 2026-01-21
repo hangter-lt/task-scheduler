@@ -31,6 +31,17 @@ type RetryPolicy struct {
 	CurrentRetry int           // 当前重试次数
 }
 
+// FailureRecord 任务失败记录
+type FailureRecord struct {
+	ID        string        `json:"id"`        // 失败记录ID
+	TaskID    string        `json:"taskId"`    // 任务ID
+	Params    any           `json:"params"`    // 任务入参
+	ExecTime  time.Time     `json:"execTime"`  // 执行时间
+	Duration  time.Duration `json:"duration"`  // 执行耗时
+	Error     string        `json:"error"`     // 失败原因
+	CreatedAt time.Time     `json:"createdAt"` // 记录创建时间
+}
+
 // Task 任务接口，所有任务类型都必须实现此接口
 type Task interface {
 	ID() string                    // 获取任务ID

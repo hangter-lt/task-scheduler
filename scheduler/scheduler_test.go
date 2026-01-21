@@ -3,6 +3,7 @@ package scheduler
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -551,5 +552,75 @@ func TestSchedulerOnceTaskResume(t *testing.T) {
 	// 验证调度器已停止
 	if scheduler.IsRunning() {
 		t.Error("Expected scheduler to be stopped")
+	}
+}
+
+func TestSchedulerFailureRecords(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 注册一个会失败的测试函数
+	task.RegisterFunc("failure-test-func", func(ctx context.Context, params any) error {
+		return fmt.Errorf("simulated task failure")
+	})
+
+	// 创建测试任务（立即执行）
+	failureTask := task.NewOnceTask(
+		"failure-test-task",
+		time.Now().Add(time.Millisecond*50),
+		0,
+		&task.RetryPolicy{MaxRetry: 0}, // 不重试
+		"failure-test-func",
+		map[string]any{"test": "params"},
+	)
+
+	// 注册任务
+	scheduler.Register(failureTask)
+
+	// 启动调度器
+	go scheduler.Run()
+
+	// 等待任务执行
+	time.Sleep(time.Millisecond * 200)
+
+	// 停止调度器
+	scheduler.Stop()
+
+	// 等待调度器完全停止
+	time.Sleep(time.Millisecond * 300)
+
+	// 获取失败记录
+	records := scheduler.GetFailureRecords("failure-test-task")
+
+	// 验证失败记录是否创建
+	if len(records) == 0 {
+		t.Error("Expected failure record to be created for failed task")
+	} else {
+		// 验证失败记录内容
+		record := records[0]
+		if record.TaskID != "failure-test-task" {
+			t.Errorf("Expected failure record TaskID to be 'failure-test-task', got %s", record.TaskID)
+		}
+		if record.Error != "simulated task failure" {
+			t.Errorf("Expected failure record Error to be 'simulated task failure', got %s", record.Error)
+		}
+		if record.Params == nil {
+			t.Error("Expected failure record Params to be set")
+		}
+		// Duration should be greater than 0, but let's not fail the test if it's not
+		// since it depends on system clock precision
+	}
+
+	// 获取所有失败记录
+	allRecords := scheduler.GetAllFailureRecords()
+	if len(allRecords) == 0 {
+		t.Error("Expected GetAllFailureRecords to return at least one record")
 	}
 }

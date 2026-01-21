@@ -77,6 +77,8 @@
 - `Run()` - 启动调度器
 - `Stop()` - 停止调度器
 - `IsRunning() bool` - 检查调度器是否正在运行
+- `GetFailureRecords(taskID string) []task.FailureRecord` - 获取指定任务的失败记录
+- `GetAllFailureRecords() map[string][]task.FailureRecord` - 获取所有任务的失败记录
 ### 3. 任务类型
 
 #### 一次性任务（OnceTask）
@@ -131,6 +133,9 @@
 - `DeleteTask(id string) error` - 从Redis删除任务
 - `AcquireLock(taskID string, expire time.Duration, nodeFlag string) (bool, error)` - 获取分布式锁
 - `ReleaseLock(taskID string, nodeFlag string) error` - 释放分布式锁
+- `SaveFailureRecord(record task.FailureRecord) error` - 保存任务失败记录到Redis
+- `LoadFailureRecords(taskID string) ([]task.FailureRecord, error)` - 从Redis加载任务的失败记录
+- `LoadAllFailureRecords() (map[string][]task.FailureRecord, error)` - 从Redis加载所有任务的失败记录
 
 
 ## 快速开始
@@ -383,6 +388,90 @@ sch2 := scheduler.NewSchedulerWithPersistence(exec2, redisPersistence, "node-2")
 5. 手动取消 → Canceled
 6. 恢复任务 → Pending
 
+### 失败记录管理
+
+失败记录功能会自动捕获和存储任务执行失败的详细信息，支持Redis和内存存储。
+
+#### 主要功能
+
+- **自动捕获**：任务执行失败时自动创建失败记录
+- **详细信息**：记录任务ID、入参、执行时间、耗时、失败原因
+- **智能存储**：有Redis时存储在Redis，无Redis时存储在内存
+- **便捷检索**：支持按任务ID获取失败记录
+- **完整记录**：维护任务与失败记录的一对多关系
+
+#### 失败记录结构
+
+```go
+type FailureRecord struct {
+    ID          string      // 失败记录ID
+    TaskID      string      // 任务ID
+    Params      any         // 任务入参
+    ExecTime    time.Time   // 执行时间
+    Duration    time.Duration // 执行耗时
+    Error       string      // 失败原因
+    CreatedAt   time.Time   // 记录创建时间
+}
+```
+
+#### API
+
+- `GetFailureRecords(taskID string) []task.FailureRecord` - 获取指定任务的失败记录
+- `GetAllFailureRecords() map[string][]task.FailureRecord` - 获取所有任务的失败记录
+
+#### 使用示例
+
+```go
+// 注册一个会失败的任务函数
+task.RegisterFunc("failure-test-func", func(ctx context.Context, params any) error {
+    return fmt.Errorf("simulated task failure")
+})
+
+// 创建并注册失败任务
+failureTask := task.NewOnceTask(
+    "failure-test-task",
+    time.Now().Add(time.Millisecond*50),
+    0,
+    &task.RetryPolicy{MaxRetry: 0}, // 不重试
+    "failure-test-func",
+    map[string]any{"test": "params"},
+)
+sch.Register(failureTask)
+
+// 等待任务执行失败...
+
+// 获取失败记录
+records := sch.GetFailureRecords("failure-test-task")
+for _, record := range records {
+    fmt.Printf("任务ID: %s\n", record.TaskID)
+    fmt.Printf("执行时间: %s\n", record.ExecTime)
+    fmt.Printf("执行耗时: %v\n", record.Duration)
+    fmt.Printf("失败原因: %s\n", record.Error)
+    fmt.Printf("入参: %v\n", record.Params)
+    fmt.Println("---")
+}
+```
+
+#### 存储机制
+
+- **Redis存储**：
+  - 使用Redis列表存储失败记录
+  - 键格式：`failure:{taskID}`
+  - 支持持久化，服务重启后数据不丢失
+
+- **内存存储**：
+  - 使用Go map存储失败记录
+  - 格式：`map[string][]task.FailureRecord`
+  - 服务重启后数据会丢失，仅作为Redis不可用时的备选方案
+
+#### 技术特点
+
+- **高效存储**：有Redis时避免内存重复存储，节省内存空间
+- **可靠备份**：无Redis时使用内存存储，确保功能不中断
+- **完整信息**：记录任务执行的关键指标，便于故障分析
+- **易于使用**：提供简单的API获取失败记录
+- **线程安全**：所有操作都有并发锁保护
+
 ## 运行测试
 
 ```bash
@@ -413,6 +502,7 @@ go test ./...
 - [x] 记录重试后仍失败的任务
 - [x] 支持任务持久化(redis缓存,记录待执行任务和一段时间内完成的任务)
 - [x] 支持分布式任务调度
+- [x] 支持任务失败记录管理
 - [ ] 支持任务查询(待执行任务,失败任务,已取消任务,已执行任务(一段时间内))
 - [ ] 支持任务优先级
 

@@ -15,15 +15,16 @@ import (
 
 // Scheduler 任务调度器，负责管理和调度各种类型的任务
 type Scheduler struct {
-	heap           *TaskHeap                     // 任务最小堆，按下次执行时间排序
-	taskMap        map[string]task.Task          // 任务ID->任务的映射，用于快速查找和取消任务
-	cancelledTasks map[string]task.Task          // 已取消任务的映射，用于恢复任务
-	mu             sync.Mutex                    // 并发锁，保护共享资源
-	executor       *executor.Executor            // 任务执行器，用于实际执行任务
-	stopCh         chan struct{}                 // 停止信号通道，用于优雅关闭调度器
-	isRunning      bool                          // 运行状态标志
-	persistence    *persistence.RedisPersistence // Redis持久化层
-	nodeFlag       string                        // 节点标识
+	heap           *TaskHeap                       // 任务最小堆，按下次执行时间排序
+	taskMap        map[string]task.Task            // 任务ID->任务的映射，用于快速查找和取消任务
+	cancelledTasks map[string]task.Task            // 已取消任务的映射，用于恢复任务
+	failureRecords map[string][]task.FailureRecord // 任务失败记录，key为任务ID，value为失败记录列表
+	mu             sync.Mutex                      // 并发锁，保护共享资源
+	executor       *executor.Executor              // 任务执行器，用于实际执行任务
+	stopCh         chan struct{}                   // 停止信号通道，用于优雅关闭调度器
+	isRunning      bool                            // 运行状态标志
+	persistence    *persistence.RedisPersistence   // Redis持久化层
+	nodeFlag       string                          // 节点标识
 }
 
 // NewScheduler 创建一个新的任务调度器
@@ -36,6 +37,7 @@ func NewScheduler(exec *executor.Executor) *Scheduler {
 		heap:           h,
 		taskMap:        make(map[string]task.Task),
 		cancelledTasks: make(map[string]task.Task),
+		failureRecords: make(map[string][]task.FailureRecord),
 		mu:             sync.Mutex{},
 		executor:       exec,
 		stopCh:         make(chan struct{}),
@@ -55,6 +57,7 @@ func NewSchedulerWithPersistence(exec *executor.Executor, persistence *persisten
 		heap:           h,
 		taskMap:        make(map[string]task.Task),
 		cancelledTasks: make(map[string]task.Task),
+		failureRecords: make(map[string][]task.FailureRecord),
 		mu:             sync.Mutex{},
 		executor:       exec,
 		stopCh:         make(chan struct{}),
@@ -306,18 +309,25 @@ func (s *Scheduler) executeTask(t task.Task) {
 		ctx, cancel = context.WithCancel(context.Background())
 	}
 
+	// 记录执行开始时间
+	startTime := time.Now()
+
 	// 提交到异步执行器
 	err := s.executor.Submit(ctx, t, func(execErr error) {
+		// 计算执行耗时
+		duration := time.Since(startTime)
 		// 任务完成后取消上下文
 		defer cancel()
 		// 处理任务执行结果
-		s.handleTaskResult(t, execErr)
+		s.handleTaskResult(t, execErr, startTime, duration)
 	})
 
 	if err != nil {
+		// 计算执行耗时
+		duration := time.Since(startTime)
 		// 提交任务失败
 		cancel()
-		s.handleTaskResult(t, err)
+		s.handleTaskResult(t, err, startTime, duration)
 	}
 }
 
@@ -340,12 +350,33 @@ func (s *Scheduler) resetCronTask(t task.Task) {
 // handleTaskResult 处理任务执行结果
 // t: 执行的任务
 // execErr: 执行错误，nil表示成功
-func (s *Scheduler) handleTaskResult(t task.Task, execErr error) {
+// startTime: 执行开始时间
+// duration: 执行耗时
+func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.Time, duration time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// 失败重试逻辑
 	if execErr != nil {
+		// 创建失败记录
+		failureRecord := task.FailureRecord{
+			ID:        uuid.New().String(),
+			TaskID:    t.ID(),
+			Params:    t.Params(),
+			ExecTime:  startTime,
+			Duration:  duration,
+			Error:     execErr.Error(),
+			CreatedAt: time.Now(),
+		}
+
+		// 保存失败记录到Redis
+		if s.persistence != nil {
+			s.persistence.SaveFailureRecord(failureRecord)
+		} else {
+			// 保存失败记录到内存
+			s.failureRecords[t.ID()] = append(s.failureRecords[t.ID()], failureRecord)
+		}
+
 		if t.RetryPolicy().MaxRetry > t.RetryPolicy().CurrentRetry {
 			// 增加重试次数
 			t.RetryPolicy().CurrentRetry++
@@ -399,4 +430,40 @@ func (s *Scheduler) IsRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.isRunning
+}
+
+// GetFailureRecords 获取指定任务的失败记录
+// taskID: 任务ID
+func (s *Scheduler) GetFailureRecords(taskID string) []task.FailureRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 先从内存获取失败记录
+	records := s.failureRecords[taskID]
+
+	// 如果有Redis持久化，从Redis加载最新的失败记录
+	if s.persistence != nil {
+		redisRecords, err := s.persistence.LoadFailureRecords(taskID)
+		if err == nil && len(redisRecords) > 0 {
+			records = redisRecords
+		}
+	}
+
+	return records
+}
+
+// GetAllFailureRecords 获取所有任务的失败记录
+func (s *Scheduler) GetAllFailureRecords() map[string][]task.FailureRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 如果有Redis持久化，从Redis加载所有失败记录
+	if s.persistence != nil {
+		allRecords, err := s.persistence.LoadAllFailureRecords()
+		if err == nil && len(allRecords) > 0 {
+			return allRecords
+		}
+	}
+
+	return s.failureRecords
 }
