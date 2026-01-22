@@ -616,3 +616,113 @@ func (s *Scheduler) DeleteAllFailureRecords(taskID string) error {
 
 	return nil
 }
+
+// GetAllTasks 获取所有任务，包括待执行、执行中、已完成和已取消的任务
+func (s *Scheduler) GetAllTasks() []task.Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 收集所有任务
+	tasks := make([]task.Task, 0, len(s.taskMap)+len(s.cancelledTasks))
+
+	// 添加活跃任务
+	for _, t := range s.taskMap {
+		tasks = append(tasks, t)
+	}
+
+	// 添加已取消任务
+	for _, t := range s.cancelledTasks {
+		tasks = append(tasks, t)
+	}
+
+	// 如果有持久化层，从Redis加载所有任务，确保获取完整的任务列表
+	if s.persistence != nil {
+		redisTasks, err := s.persistence.LoadAllTasks()
+		if err == nil {
+			// 使用map去重
+			taskMap := make(map[string]task.Task)
+			for _, t := range tasks {
+				taskMap[t.ID()] = t
+			}
+			for _, t := range redisTasks {
+				if _, exists := taskMap[t.ID()]; !exists {
+					tasks = append(tasks, t)
+				}
+			}
+		}
+	}
+
+	return tasks
+}
+
+// GetTasksByStatus 根据状态获取任务
+// status: 任务状态
+func (s *Scheduler) GetTasksByStatus(status task.TaskStatus) []task.Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 收集符合状态的任务
+	var tasks []task.Task
+
+	// 检查活跃任务
+	for _, t := range s.taskMap {
+		if t.Status() == status {
+			tasks = append(tasks, t)
+		}
+	}
+
+	// 检查已取消任务
+	for _, t := range s.cancelledTasks {
+		if t.Status() == status {
+			tasks = append(tasks, t)
+		}
+	}
+
+	// 如果有持久化层，从Redis加载所有任务并过滤
+	if s.persistence != nil {
+		redisTasks, err := s.persistence.LoadAllTasks()
+		if err == nil {
+			// 使用map去重
+			taskMap := make(map[string]task.Task)
+			for _, t := range tasks {
+				taskMap[t.ID()] = t
+			}
+			for _, t := range redisTasks {
+				if t.Status() == status {
+					if _, exists := taskMap[t.ID()]; !exists {
+						tasks = append(tasks, t)
+					}
+				}
+			}
+		}
+	}
+
+	return tasks
+}
+
+// GetTask 根据ID获取任务
+// id: 任务ID
+func (s *Scheduler) GetTask(id string) task.Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 先从活跃任务中查找
+	if t, exists := s.taskMap[id]; exists {
+		return t
+	}
+
+	// 再从已取消任务中查找
+	if t, exists := s.cancelledTasks[id]; exists {
+		return t
+	}
+
+	// 如果有持久化层，从Redis中查找
+	if s.persistence != nil {
+		t, err := s.persistence.LoadTask(id)
+		if err == nil {
+			return t
+		}
+	}
+
+	return nil
+}

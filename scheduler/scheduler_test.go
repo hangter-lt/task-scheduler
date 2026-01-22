@@ -771,3 +771,143 @@ func TestSchedulerDeleteFailureRecords(t *testing.T) {
 	// 停止调度器
 	scheduler.Stop()
 }
+
+func TestSchedulerGetAllTasks(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 创建测试任务
+	task1 := task.NewOnceTask(
+		"test-task-1",
+		time.Now().Add(time.Second*5),
+		time.Second*5,
+		nil,
+		"scheduler-test-func-1",
+		map[string]any{},
+	)
+
+	task2 := task.NewOnceTask(
+		"test-task-2",
+		time.Now().Add(time.Second*10),
+		time.Second*5,
+		nil,
+		"scheduler-test-func-1",
+		map[string]any{},
+	)
+
+	// 注册任务
+	scheduler.Register(task1)
+	scheduler.Register(task2)
+
+	// 取消一个任务
+	scheduler.Cancel("test-task-2")
+
+	// 获取所有任务
+	tasks := scheduler.GetAllTasks()
+
+	// 验证任务数量
+	if len(tasks) < 2 {
+		t.Errorf("Expected at least 2 tasks, got %d", len(tasks))
+	}
+}
+
+func TestSchedulerGetTasksByStatus(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 创建测试任务
+	task1 := task.NewOnceTask(
+		"test-task-1",
+		time.Now().Add(time.Second*5),
+		time.Second*5,
+		nil,
+		"scheduler-test-func-1",
+		map[string]any{},
+	)
+
+	task2 := task.NewOnceTask(
+		"test-task-2",
+		time.Now().Add(time.Second*10),
+		time.Second*5,
+		nil,
+		"scheduler-test-func-1",
+		map[string]any{},
+	)
+
+	// 注册任务
+	scheduler.Register(task1)
+	scheduler.Register(task2)
+
+	// 取消一个任务
+	scheduler.Cancel("test-task-2")
+
+	// 测试获取待执行任务
+	pendingTasks := scheduler.GetTasksByStatus(task.TaskStatusPending)
+	if len(pendingTasks) < 1 {
+		t.Errorf("Expected at least 1 pending task, got %d", len(pendingTasks))
+	}
+
+	// 测试获取已取消任务
+	canceledTasks := scheduler.GetTasksByStatus(task.TaskStatusCanceled)
+	if len(canceledTasks) < 1 {
+		t.Errorf("Expected at least 1 canceled task, got %d", len(canceledTasks))
+	}
+}
+
+func TestSchedulerGetTask(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 创建测试任务
+	testTask := task.NewOnceTask(
+		"test-task",
+		time.Now().Add(time.Second*5),
+		time.Second*5,
+		nil,
+		"scheduler-test-func-1",
+		map[string]any{"test": "value"},
+	)
+
+	// 注册任务
+	scheduler.Register(testTask)
+
+	// 测试获取存在的任务
+	foundTask := scheduler.GetTask("test-task")
+	if foundTask == nil {
+		t.Error("Expected to find task by ID")
+	}
+
+	// 测试获取不存在的任务
+	nonexistentTask := scheduler.GetTask("nonexistent-task")
+	if nonexistentTask != nil {
+		t.Error("Expected nil for nonexistent task")
+	}
+
+	// 测试获取已取消的任务
+	scheduler.Cancel("test-task")
+	canceledTask := scheduler.GetTask("test-task")
+	if canceledTask == nil {
+		t.Error("Expected to find canceled task by ID")
+	}
+}
