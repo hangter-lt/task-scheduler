@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>任务调度系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f5f5f5;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #2c3e50;
+        }
+        
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-bottom: none;
+            border-radius: 5px 5px 0 0;
+            margin-right: 5px;
+        }
+        
+        .tab.active {
+            background-color: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+        
+        .tab-content {
+            display: none;
+            padding: 20px;
+            background-color: white;
+            border: 1px solid #ddd;
+            border-radius: 0 0 5px 5px;
+            min-height: 400px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button.primary {
+            background-color: #3498db;
+        }
+        
+        button.primary:hover {
+            background-color: #2980b9;
+        }
+        
+        button.danger {
+            background-color: #e74c3c;
+        }
+        
+        button.danger:hover {
+            background-color: #c0392b;
+        }
+        
+        button.success {
+            background-color: #27ae60;
+        }
+        
+        button.success:hover {
+            background-color: #229954;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        th {
+            background-color: #f2f2f2;
+        }
+        
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        
+        .status {
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .status.pending {
+            background-color: #f39c12;
+            color: white;
+        }
+        
+        .status.running {
+            background-color: #3498db;
+            color: white;
+        }
+        
+        .status.completed {
+            background-color: #27ae60;
+            color: white;
+        }
+        
+        .status.canceled {
+            background-color: #95a5a6;
+            color: white;
+        }
+        
+        .status.failed {
+            background-color: #e74c3c;
+            color: white;
+        }
+        
+        .alert {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+        
+        .alert.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .json-editor {
+            width: 100%;
+            height: 150px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>任务调度系统</h1>
+        
+        <div class="tabs">
+            <div class="tab active" data-tab="create">创建任务</div>
+            <div class="tab" data-tab="list">任务列表</div>
+            <div class="tab" data-tab="failures">失败记录</div>
+            <div class="tab" data-tab="funcs">函数列表</div>
+        </div>
+        
+        <div id="create" class="tab-content active">
+            <h2>创建新任务</h2>
+            <div class="alert success" id="create-success" style="display: none;">任务创建成功</div>
+            <div class="alert error" id="create-error" style="display: none;"></div>
+            
+            <form id="task-form">
+                <div class="form-group">
+                    <label for="task-id">任务ID</label>
+                    <input type="text" id="task-id" name="id" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="task-type">任务类型</label>
+                    <select id="task-type" name="type" required>
+                        <option value="immediate">立即执行</option>
+                        <option value="once">一次性任务</option>
+                        <option value="cron">Cron任务</option>
+                    </select>
+                </div>
+                
+                <div class="form-group" id="exec-time-group" style="display: none;">
+                    <label for="exec-time">执行时间</label>
+                    <input type="datetime-local" id="exec-time" name="execTime">
+                </div>
+                
+                <div class="form-group" id="cron-expr-group" style="display: none;">
+                    <label for="cron-expr">Cron表达式 (秒 分 时 日 月 周)</label>
+                    <input type="text" id="cron-expr" name="cronExpr" placeholder="例如: */5 * * * * * 表示每5秒执行一次">
+                </div>
+                
+                <div class="form-group">
+                    <label for="func-id">执行函数</label>
+                    <select id="func-id" name="funcId" required>
+                        <option value="example-func">示例函数</option>
+                        <option value="error-func">错误示例函数</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="task-params">任务参数 (JSON格式)</label>
+                    <textarea id="task-params" name="params" class="json-editor" placeholder='{"key": "value"}'>{"key": "value"}</textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="timeout">超时时间 (毫秒，0表示无超时)</label>
+                    <input type="number" id="timeout" name="timeout" value="0" min="0">
+                </div>
+                
+                <div class="form-group">
+                    <label for="max-retry">最大重试次数 (0表示不重试)</label>
+                    <input type="number" id="max-retry" name="maxRetry" value="0" min="0">
+                </div>
+                
+                <div class="form-group">
+                    <label for="retry-delay">重试间隔 (毫秒)</label>
+                    <input type="number" id="retry-delay" name="retryDelay" value="1000" min="0">
+                </div>
+                
+                <button type="submit">创建任务</button>
+            </form>
+        </div>
+        
+        <div id="list" class="tab-content">
+            <h2>任务列表</h2>
+            <div class="alert success" id="action-success" style="display: none;">操作成功</div>
+            <div class="alert error" id="action-error" style="display: none;"></div>
+            
+            <table id="tasks-table">
+                <thead>
+                    <tr>
+                        <th>任务ID</th>
+                        <th>类型</th>
+                        <th>状态</th>
+                        <th>下次执行时间</th>
+                        <th>函数ID</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <!-- 任务列表将通过JavaScript动态生成 -->
+                </tbody>
+            </table>
+        </div>
+        
+        <div id="failures" class="tab-content">
+            <h2>失败记录</h2>
+            <div id="failures-content">
+                <!-- 失败记录将通过JavaScript动态生成 -->
+            </div>
+        </div>
+        
+        <div id="funcs" class="tab-content">
+            <h2>函数列表</h2>
+            <div id="funcs-content">
+                <!-- 函数列表将通过JavaScript动态生成 -->
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 选项卡切换
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', () => {
+                // 移除所有选项卡的活动状态
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                
+                // 添加当前选项卡的活动状态
+                tab.classList.add('active');
+                const tabId = tab.getAttribute('data-tab');
+                document.getElementById(tabId).classList.add('active');
+                
+                // 如果切换到任务列表或失败记录，重新加载数据
+                if (tabId === 'list') {
+                    loadTasks();
+                } else if (tabId === 'failures') {
+                    loadFailures();
+                } else if (tabId === 'funcs') {
+                    loadFuncs();
+                }
+            });
+        });
+        
+        // 任务类型切换
+        document.getElementById('task-type').addEventListener('change', function() {
+            const type = this.value;
+            document.getElementById('exec-time-group').style.display = type === 'once' ? 'block' : 'none';
+            document.getElementById('cron-expr-group').style.display = type === 'cron' ? 'block' : 'none';
+        });
+        
+        // 表单提交
+        document.getElementById('task-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                id: document.getElementById('task-id').value,
+                type: document.getElementById('task-type').value,
+                funcId: document.getElementById('func-id').value,
+                params: JSON.parse(document.getElementById('task-params').value),
+                timeout: parseInt(document.getElementById('timeout').value),
+                maxRetry: parseInt(document.getElementById('max-retry').value),
+                retryDelay: parseInt(document.getElementById('retry-delay').value)
+            };
+            
+            if (formData.type === 'once') {
+                formData.execTime = document.getElementById('exec-time').value + ':00Z';
+            } else if (formData.type === 'cron') {
+                formData.cronExpr = document.getElementById('cron-expr').value;
+            }
+            
+            fetch('/api/tasks', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(formData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    document.getElementById('create-success').style.display = 'block';
+                    document.getElementById('create-error').style.display = 'none';
+                    document.getElementById('task-form').reset();
+                } else {
+                    document.getElementById('create-error').textContent = data.message;
+                    document.getElementById('create-error').style.display = 'block';
+                    document.getElementById('create-success').style.display = 'none';
+                }
+            })
+            .catch(error => {
+                document.getElementById('create-error').textContent = '创建任务失败: ' + error.message;
+                document.getElementById('create-error').style.display = 'block';
+                document.getElementById('create-success').style.display = 'none';
+            });
+        });
+        
+        // 加载任务列表
+        function loadTasks() {
+            fetch('/api/tasks')
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    const tbody = document.querySelector('#tasks-table tbody');
+                    tbody.innerHTML = '';
+                    
+                    data.data.forEach(task => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td><a href="#" onclick="showTaskFailures('${task.id}')">${task.id}</a></td>
+                            <td>${task.type}</td>
+                            <td><span class="status ${task.status}">${task.status}</span></td>
+                            <td>${task.nextExecTime}</td>
+                            <td>${task.funcId}</td>
+                            <td>
+                                ${task.status === 'pending' ? `<button class="danger" onclick="cancelTask('${task.id}')">取消</button>` : ''}
+                                ${task.status === 'canceled' ? `<button class="success" onclick="resumeTask('${task.id}')">恢复</button>` : ''}
+                                <button class="primary" onclick="executeTask('${task.id}')">立即执行</button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                }
+            });
+        }
+
+        // 查看任务失败记录
+        function showTaskFailures(taskId) {
+            fetch(`/api/failures/${taskId}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    const records = data.data;
+                    let html = `<h3>任务 ${taskId} 的失败记录</h3>`;
+                    
+                    if (records.length === 0) {
+                        html += '<p>该任务暂无失败记录</p>';
+                    } else {
+                        // 添加表格上方的重试按钮
+                        html += `<div class="retry-container">
+                            <button onclick="retryTask('${taskId}')" class="retry-all-button">重试最新失败记录</button>
+                        </div>`;
+                        
+                        html += `
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>记录ID</th>
+                                        <th>执行时间</th>
+                                        <th>执行耗时</th>
+                                        <th>失败原因</th>
+                                        <th>参数</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                        `;
+                        
+                        records.forEach(record => {
+                            html += `
+                                <tr>
+                                    <td>${record.id}</td>
+                                    <td>${record.execTime}</td>
+                                    <td>${record.duration}</td>
+                                    <td>${record.error}</td>
+                                    <td>${JSON.stringify(record.params)}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        html += `
+                                </tbody>
+                            </table>
+                        `;
+                    }
+                    
+                    // 创建模态框
+                    const modal = document.createElement('div');
+                    modal.className = 'modal';
+                    modal.innerHTML = `
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h2>失败记录</h2>
+                                <button onclick="this.closest('.modal').remove()" class="close-btn">×</button>
+                            </div>
+                            <div class="modal-body">
+                                ${html}
+                            </div>
+                            <div class="modal-footer">
+                                <button onclick="this.closest('.modal').remove()" class="close-button">关闭</button>
+                            </div>
+                        </div>
+                    `;
+                    
+                    document.body.appendChild(modal);
+                    
+                    // 添加模态框样式
+                    const style = document.createElement('style');
+                    style.textContent = `
+                        .modal {
+                            position: fixed;
+                            top: 0;
+                            left: 0;
+                            width: 100%;
+                            height: 100%;
+                            background-color: rgba(0, 0, 0, 0.5);
+                            display: flex;
+                            justify-content: center;
+                            align-items: center;
+                            z-index: 1000;
+                        }
+                        .modal-content {
+                            background-color: white;
+                            padding: 20px;
+                            border-radius: 8px;
+                            max-width: 80%;
+                            max-height: 80%;
+                            overflow-y: auto;
+                            display: flex;
+                            flex-direction: column;
+                        }
+                        .modal-header {
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            margin-bottom: 20px;
+                            border-bottom: 1px solid #ddd;
+                            padding-bottom: 10px;
+                        }
+                        .modal-header h2 {
+                            margin: 0;
+                        }
+                        .modal-header .close-btn {
+                            background: none;
+                            border: none;
+                            font-size: 24px;
+                            cursor: pointer;
+                            color: #999;
+                            padding: 0;
+                            width: 30px;
+                            height: 30px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                        }
+                        .modal-header .close-btn:hover {
+                            color: #333;
+                        }
+                        .modal-body {
+                            flex: 1;
+                            overflow-y: auto;
+                        }
+                        .modal-footer {
+                            margin-top: 20px;
+                            padding-top: 10px;
+                            border-top: 1px solid #ddd;
+                            display: flex;
+                            justify-content: flex-end;
+                        }
+                        .modal-footer .close-button {
+                            padding: 8px 16px;
+                            background-color: #f0f0f0;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        }
+                        .modal-footer .close-button:hover {
+                            background-color: #e0e0e0;
+                        }
+                        .modal-body table {
+                            width: 100%;
+                            border-collapse: collapse;
+                        }
+                        .modal-body th, .modal-body td {
+                            border: 1px solid #ddd;
+                            padding: 8px;
+                            text-align: left;
+                        }
+                        .modal-body th {
+                            background-color: #f2f2f2;
+                        }
+                        .retry-button {
+                            padding: 4px 8px;
+                            background-color: #4CAF50;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            cursor: pointer;
+                            font-size: 12px;
+                        }
+                        .retry-button:hover {
+                            background-color: #45a049;
+                        }
+                        .retry-container {
+                            margin-bottom: 15px;
+                            display: flex;
+                            justify-content: flex-start;
+                        }
+                        .retry-all-button {
+                            padding: 8px 16px;
+                            background-color: #4CAF50;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            cursor: pointer;
+                            font-size: 14px;
+                        }
+                        .retry-all-button:hover {
+                            background-color: #45a049;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+            })
+            .catch(error => {
+                alert('获取失败记录失败: ' + error.message);
+            });
+        }
+
+        // 加载失败记录
+        function loadFailures() {
+            fetch('/api/failures')
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    const content = document.getElementById('failures-content');
+                    content.innerHTML = '';
+                    
+                    if (Object.keys(data.data).length === 0) {
+                        content.innerHTML = '<p>暂无失败记录</p>';
+                        return;
+                    }
+                    
+                    for (const taskId in data.data) {
+                        const records = data.data[taskId];
+                        if (records.length > 0) {
+                            const taskSection = document.createElement('div');
+                            taskSection.innerHTML = `<h3>任务: ${taskId}</h3>`;
+                            
+                            const table = document.createElement('table');
+                            table.innerHTML = `
+                                <thead>
+                                    <tr>
+                                        <th>记录ID</th>
+                                        <th>执行时间</th>
+                                        <th>执行耗时</th>
+                                        <th>失败原因</th>
+                                        <th>参数</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                </tbody>
+                            `;
+                            
+                            const tbody = table.querySelector('tbody');
+                            records.forEach(record => {
+                                const row = document.createElement('tr');
+                                row.innerHTML = `
+                                    <td>${record.id}</td>
+                                    <td>${record.execTime}</td>
+                                    <td>${record.duration}</td>
+                                    <td>${record.error}</td>
+                                    <td>${JSON.stringify(record.params)}</td>
+                                `;
+                                tbody.appendChild(row);
+                            });
+                            
+                            taskSection.appendChild(table);
+                            content.appendChild(taskSection);
+                        }
+                    }
+                }
+            });
+        }
+        
+        // 加载函数列表
+        function loadFuncs() {
+            fetch('/api/funcs')
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    const content = document.getElementById('funcs-content');
+                    content.innerHTML = '';
+                    
+                    if (data.data.length === 0) {
+                        content.innerHTML = '<p>暂无注册函数</p>';
+                        return;
+                    }
+                    
+                    const table = document.createElement('table');
+                    table.innerHTML = `
+                        <thead>
+                            <tr>
+                                <th>函数ID</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    `;
+                    
+                    const tbody = table.querySelector('tbody');
+                    data.data.forEach(funcId => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `<td>${funcId}</td>`;
+                        tbody.appendChild(row);
+                    });
+                    
+                    content.appendChild(table);
+                }
+            });
+        }
+        
+        // 取消任务
+        function cancelTask(taskId) {
+            fetch(`/api/tasks/${taskId}/cancel`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    document.getElementById('action-success').style.display = 'block';
+                    document.getElementById('action-error').style.display = 'none';
+                    loadTasks();
+                } else {
+                    document.getElementById('action-error').textContent = data.message;
+                    document.getElementById('action-error').style.display = 'block';
+                    document.getElementById('action-success').style.display = 'none';
+                }
+            });
+        }
+        
+        // 恢复任务
+        function resumeTask(taskId) {
+            fetch(`/api/tasks/${taskId}/resume`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    document.getElementById('action-success').style.display = 'block';
+                    document.getElementById('action-error').style.display = 'none';
+                    loadTasks();
+                } else {
+                    document.getElementById('action-error').textContent = data.message;
+                    document.getElementById('action-error').style.display = 'block';
+                    document.getElementById('action-success').style.display = 'none';
+                }
+            });
+        }
+        
+        // 重试任务
+        function retryTask(taskId, recordId) {
+            // 构建API URL，包含任务ID和记录ID
+            let url = `/api/tasks/${taskId}/retry`;
+            if (recordId) {
+                url += `?recordId=${recordId}`;
+            }
+            
+            fetch(url, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    document.getElementById('action-success').style.display = 'block';
+                    document.getElementById('action-error').style.display = 'none';
+                    loadTasks();
+                    
+                    // 如果是从失败记录页面发起的重试，关闭当前模态框
+                    const modal = document.querySelector('.modal');
+                    if (modal) {
+                        modal.remove();
+                    }
+                } else {
+                    document.getElementById('action-error').textContent = data.message;
+                    document.getElementById('action-error').style.display = 'block';
+                    document.getElementById('action-success').style.display = 'none';
+                }
+            });
+        }
+        
+        // 立即执行任务
+        function executeTask(taskId) {
+            fetch(`/api/tasks/${taskId}/execute`, {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.code === 0) {
+                    document.getElementById('action-success').style.display = 'block';
+                    document.getElementById('action-error').style.display = 'none';
+                    loadTasks();
+                } else {
+                    document.getElementById('action-error').textContent = data.message;
+                    document.getElementById('action-error').style.display = 'block';
+                    document.getElementById('action-success').style.display = 'none';
+                }
+            })
+            .catch(error => {
+                document.getElementById('action-error').textContent = '立即执行任务失败: ' + error.message;
+                document.getElementById('action-error').style.display = 'block';
+                document.getElementById('action-success').style.display = 'none';
+            });
+        }
+    </script>
+</body>
+</html>

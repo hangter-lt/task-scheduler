@@ -21,3 +21,12 @@ func GetFunc(id FuncID) (HandleFunc, bool) {
 	f, ok := FuncRegistry[id]
 	return f, ok
 }
+
+// GetAllFuncs 获取所有注册的函数ID
+func GetAllFuncIDs() []FuncID {
+	funcs := make([]FuncID, 0, len(FuncRegistry))
+	for id := range FuncRegistry {
+		funcs = append(funcs, id)
+	}
+	return funcs
+}

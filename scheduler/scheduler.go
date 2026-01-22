@@ -50,7 +50,6 @@ func NewScheduler(exec *executor.Executor) *Scheduler {
 // exec: 关联的任务执行器
 // persistence: Redis持久化层
 func NewSchedulerWithPersistence(exec *executor.Executor, persistence *persistence.RedisPersistence, nodeFlag string) *Scheduler {
-
 	h := &TaskHeap{}
 	heap.Init(h)
 
@@ -89,12 +88,6 @@ func (s *Scheduler) Register(t task.Task) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 跳过超过时间的一次性任务
-	if t.Type() == task.TaskTypeOnce && t.NextExecTime().Before(time.Now()) {
-		log.Printf("一次性任务 %s 已过期，跳过注册", t.ID())
-		return
-	}
-
 	// 检查任务是否已存在
 	if _, ok := s.taskMap[t.ID()]; ok {
 		// 任务已存在，更新任务以及redis中的任务
@@ -123,10 +116,15 @@ func (s *Scheduler) Cancel(id string) {
 	defer s.mu.Unlock()
 
 	// 查找任务
+	fmt.Printf("s.taskMap: %v\n", s.taskMap)
 	t, ok := s.taskMap[id]
 	if !ok {
+		fmt.Printf("task not found: %s\n", id)
 		return
 	}
+
+	fmt.Printf("id: %v\n", id)
+	fmt.Printf("t: %v\n", t)
 
 	// 从映射中移除任务
 	delete(s.taskMap, id)
@@ -156,14 +154,27 @@ func (s *Scheduler) Resume(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	var t task.Task
+
 	// 从已取消任务映射中查找任务
 	t, ok := s.cancelledTasks[id]
-	if !ok {
-		return
+	if ok {
+		// 从已取消任务映射中移除
+		delete(s.cancelledTasks, id)
 	}
 
-	// 从已取消任务映射中移除
-	delete(s.cancelledTasks, id)
+	if s.persistence != nil {
+		// 从Redis加载任务
+		task, err := s.persistence.LoadTask(id)
+		if err != nil {
+			return
+		}
+		t = task
+	}
+
+	if t == nil {
+		return
+	}
 
 	// 确保下次执行时间正确
 	// 对于一次性任务，如果执行时间已过，使用当前时间
@@ -188,6 +199,40 @@ func (s *Scheduler) Resume(id string) {
 	}
 }
 
+// ExecuteTaskImmediately 立即执行指定任务
+// id: 要立即执行的任务ID
+func (s *Scheduler) ExecuteTaskImmediately(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 查找任务
+	t, ok := s.taskMap[id]
+	if !ok {
+		return fmt.Errorf("任务不存在或已取消")
+	}
+
+	// 将任务的下次执行时间设置为当前时间，使其立即执行
+	t.SetNextExecTime(time.Now())
+
+	// 重新调整堆结构，确保任务在堆顶
+	// 先从堆中移除任务
+	for i := 0; i < s.heap.Len(); i++ {
+		if (*s.heap)[i].ID() == id {
+			heap.Remove(s.heap, i)
+			break
+		}
+	}
+	// 重新添加任务到堆中
+	heap.Push(s.heap, t)
+
+	// 保存任务状态到Redis
+	if s.persistence != nil {
+		s.persistence.SaveTask(t)
+	}
+
+	return nil
+}
+
 // Run 启动调度器
 // 启动后会持续运行，直到调用Stop方法
 func (s *Scheduler) Run() {
@@ -209,11 +254,11 @@ func (s *Scheduler) Run() {
 			s.mu.Unlock()
 			return
 		default:
+			// 检查是否有任务需要执行
 			s.mu.Lock()
-			// 无任务时休眠
 			if s.heap.Len() == 0 {
 				s.mu.Unlock()
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(200 * time.Millisecond)
 				continue
 			}
 
@@ -221,28 +266,58 @@ func (s *Scheduler) Run() {
 			nextTask := s.heap.Peek()
 			now := time.Now()
 			waitDur := nextTask.NextExecTime().Sub(now)
-			s.mu.Unlock()
 
-			// 等待任务执行时间
-			if waitDur > 0 {
-				select {
-				case <-time.After(waitDur):
-					// 时间到，继续执行
-				case <-s.stopCh:
-					// 等待期间接收到停止信号，退出
-					return
+			// 如果任务时间到了，执行任务
+			if waitDur <= 0 {
+				// 从堆中弹出任务
+				execTask := heap.Pop(s.heap).(task.Task)
+				if execTask.Type() == task.TaskTypeOnce {
+					// 一次性任务执行后从映射中移除
+					delete(s.taskMap, execTask.ID())
 				}
-				continue
+				s.mu.Unlock()
+
+				// 提交任务到执行器异步执行
+				go s.executeTask(execTask)
+			} else {
+				// 任务时间未到，需要等待
+				taskID := nextTask.ID()
+				s.mu.Unlock()
+
+				// 使用较短的睡眠时间，定期检查堆顶是否有更紧急的任务
+				const checkInterval = 50 * time.Millisecond
+
+				// 持续检查直到时间到了或者有更紧急的任务
+				for {
+					// 等待检查间隔
+					time.Sleep(checkInterval)
+
+					// 检查是否有更紧急的任务
+					s.mu.Lock()
+					if s.heap.Len() == 0 {
+						s.mu.Unlock()
+						break
+					}
+
+					// 重新获取堆顶任务
+					currentTopTask := s.heap.Peek()
+
+					// 检查当前堆顶任务是否与之前的相同
+					if currentTopTask.ID() != taskID {
+						// 堆顶任务已变化，说明有更紧急的任务，跳出循环重新检查
+						s.mu.Unlock()
+						break
+					}
+
+					// 检查任务时间是否到了
+					if currentTopTask.NextExecTime().Before(time.Now()) {
+						// 任务时间到了，跳出循环执行
+						s.mu.Unlock()
+						break
+					}
+					s.mu.Unlock()
+				}
 			}
-
-			// 执行任务
-			s.mu.Lock()
-			execTask := heap.Pop(s.heap).(task.Task)
-			delete(s.taskMap, execTask.ID())
-			s.mu.Unlock()
-
-			// 提交任务到执行器异步执行
-			go s.executeTask(execTask)
 		}
 	}
 }
@@ -529,7 +604,16 @@ func (s *Scheduler) RetryFailedTask(taskID string, recordID string) error {
 		// 任务不存在，尝试从已取消任务中查找
 		t, exists = s.cancelledTasks[taskID]
 		if !exists {
-			return fmt.Errorf("task not found: %s", taskID)
+			// 有redis持久化层，尝试从Redis加载任务
+			if s.persistence != nil {
+				task, err := s.persistence.LoadTask(taskID)
+				if err != nil {
+					return fmt.Errorf("failed to load task from persistence: %w", err)
+				}
+				t = task
+			} else {
+				return fmt.Errorf("task not found: %s", taskID)
+			}
 		}
 	}
 
