@@ -624,3 +624,150 @@ func TestSchedulerFailureRecords(t *testing.T) {
 		t.Error("Expected GetAllFailureRecords to return at least one record")
 	}
 }
+
+func TestSchedulerRetryFailedTask(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 注册一个会失败的测试函数
+	task.RegisterFunc("retry-test-func", func(ctx context.Context, params any) error {
+		return fmt.Errorf("simulated task failure")
+	})
+
+	// 创建测试任务（立即执行）
+	retryTask := task.NewOnceTask(
+		"retry-test-task",
+		time.Now().Add(time.Millisecond*50),
+		0,
+		&task.RetryPolicy{MaxRetry: 0}, // 不重试
+		"retry-test-func",
+		map[string]any{"test": "retry"},
+	)
+
+	// 注册任务
+	scheduler.Register(retryTask)
+
+	// 启动调度器
+	go scheduler.Run()
+
+	// 等待任务执行失败
+	time.Sleep(time.Millisecond * 200)
+
+	// 获取失败记录
+	records := scheduler.GetFailureRecords("retry-test-task")
+	if len(records) == 0 {
+		t.Fatal("Expected failure record to be created for failed task")
+	}
+
+	// 使用最新的失败记录重试任务
+	err = scheduler.RetryFailedTask("retry-test-task", "")
+	if err != nil {
+		t.Errorf("Expected RetryFailedTask to succeed, got error: %v", err)
+	}
+
+	// 验证任务状态
+	scheduler.mu.Lock()
+	taskFromMap, exists := scheduler.taskMap["retry-test-task"]
+	scheduler.mu.Unlock()
+
+	if !exists {
+		t.Error("Expected task to be in taskMap after retry")
+	} else if taskFromMap.Status() != task.TaskStatusPending {
+		t.Errorf("Expected task status to be Pending, got %s", taskFromMap.Status())
+	}
+
+	// 停止调度器
+	scheduler.Stop()
+}
+
+func TestSchedulerDeleteFailureRecords(t *testing.T) {
+	// 创建执行器
+	exec, err := executor.NewExecutor(5)
+	if err != nil {
+		t.Fatalf("Failed to create executor: %v", err)
+	}
+	defer exec.Release()
+
+	// 创建调度器
+	scheduler := NewScheduler(exec)
+
+	// 注册一个会失败的测试函数
+	task.RegisterFunc("delete-test-func", func(ctx context.Context, params any) error {
+		return fmt.Errorf("simulated task failure")
+	})
+
+	// 创建测试任务（立即执行）
+	deleteTask := task.NewOnceTask(
+		"delete-test-task",
+		time.Now().Add(time.Millisecond*50),
+		0,
+		&task.RetryPolicy{MaxRetry: 0}, // 不重试
+		"delete-test-func",
+		map[string]any{"test": "delete"},
+	)
+
+	// 注册任务
+	scheduler.Register(deleteTask)
+
+	// 启动调度器
+	go scheduler.Run()
+
+	// 等待任务执行失败
+	time.Sleep(time.Millisecond * 200)
+
+	// 获取失败记录
+	records := scheduler.GetFailureRecords("delete-test-task")
+	if len(records) == 0 {
+		t.Fatal("Expected failure record to be created for failed task")
+	}
+
+	// 测试删除指定的失败记录
+	recordID := records[0].ID
+	err = scheduler.DeleteFailureRecord("delete-test-task", recordID)
+	if err != nil {
+		t.Errorf("Expected DeleteFailureRecord to succeed, got error: %v", err)
+	}
+
+	// 验证记录是否删除
+	recordsAfterDelete := scheduler.GetFailureRecords("delete-test-task")
+	if len(recordsAfterDelete) != 0 {
+		t.Error("Expected no failure records after deletion")
+	}
+
+	// 重新执行任务以创建新的失败记录
+	// 注意：我们需要重新创建任务，因为之前的任务可能已经被处理
+	newRetryTask := task.NewOnceTask(
+		"delete-test-task",
+		time.Now().Add(time.Millisecond*50),
+		0,
+		&task.RetryPolicy{MaxRetry: 0}, // 不重试
+		"delete-test-func",
+		map[string]any{"test": "delete"},
+	)
+	scheduler.Register(newRetryTask)
+
+	// 等待任务执行失败
+	time.Sleep(time.Millisecond * 200)
+
+	// 测试删除所有失败记录
+	err = scheduler.DeleteAllFailureRecords("delete-test-task")
+	if err != nil {
+		t.Errorf("Expected DeleteAllFailureRecords to succeed, got error: %v", err)
+	}
+
+	// 验证所有记录是否删除
+	recordsAfterDeleteAll := scheduler.GetFailureRecords("delete-test-task")
+	if len(recordsAfterDeleteAll) != 0 {
+		t.Error("Expected no failure records after DeleteAllFailureRecords")
+	}
+
+	// 停止调度器
+	scheduler.Stop()
+}

@@ -136,6 +136,8 @@
 - `SaveFailureRecord(record task.FailureRecord) error` - 保存任务失败记录到Redis
 - `LoadFailureRecords(taskID string) ([]task.FailureRecord, error)` - 从Redis加载任务的失败记录
 - `LoadAllFailureRecords() (map[string][]task.FailureRecord, error)` - 从Redis加载所有任务的失败记录
+- `DeleteFailureRecord(taskID string, recordID string) error` - 从Redis删除指定的失败记录
+- `DeleteAllFailureRecords(taskID string) error` - 从Redis删除指定任务的所有失败记录
 
 
 ## 快速开始
@@ -399,6 +401,8 @@ sch2 := scheduler.NewSchedulerWithPersistence(exec2, redisPersistence, "node-2")
 - **智能存储**：有Redis时存储在Redis，无Redis时存储在内存
 - **便捷检索**：支持按任务ID获取失败记录
 - **完整记录**：维护任务与失败记录的一对多关系
+- **失败重试**：支持基于失败记录重新执行任务
+- **记录删除**：支持删除指定的失败记录或所有失败记录
 
 #### 失败记录结构
 
@@ -418,6 +422,9 @@ type FailureRecord struct {
 
 - `GetFailureRecords(taskID string) []task.FailureRecord` - 获取指定任务的失败记录
 - `GetAllFailureRecords() map[string][]task.FailureRecord` - 获取所有任务的失败记录
+- `RetryFailedTask(taskID string, recordID string) error` - 基于失败记录重试任务
+- `DeleteFailureRecord(taskID string, recordID string) error` - 删除指定的失败记录
+- `DeleteAllFailureRecords(taskID string) error` - 删除指定任务的所有失败记录
 
 #### 使用示例
 
@@ -450,6 +457,33 @@ for _, record := range records {
     fmt.Printf("入参: %v\n", record.Params)
     fmt.Println("---")
 }
+
+// 基于失败记录重试任务（使用最新的失败记录）
+err := sch.RetryFailedTask("failure-test-task", "")
+if err != nil {
+    fmt.Printf("重试任务失败: %v\n", err)
+} else {
+    fmt.Println("任务已加入重试队列")
+}
+
+// 删除指定的失败记录
+if len(records) > 0 {
+    recordID := records[0].ID
+    err := sch.DeleteFailureRecord("failure-test-task", recordID)
+    if err != nil {
+        fmt.Printf("删除失败记录失败: %v\n", err)
+    } else {
+        fmt.Printf("失败记录已删除: %s\n", recordID)
+    }
+}
+
+// 删除所有失败记录
+err = sch.DeleteAllFailureRecords("failure-test-task")
+if err != nil {
+    fmt.Printf("删除所有失败记录失败: %v\n", err)
+} else {
+    fmt.Println("所有失败记录已删除")
+}
 ```
 
 #### 存储机制
@@ -471,6 +505,8 @@ for _, record := range records {
 - **完整信息**：记录任务执行的关键指标，便于故障分析
 - **易于使用**：提供简单的API获取失败记录
 - **线程安全**：所有操作都有并发锁保护
+- **智能重试**：支持基于失败记录的任务重试
+- **灵活删除**：支持删除单个或所有失败记录
 
 ## 运行测试
 

@@ -3,6 +3,7 @@ package scheduler
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -466,4 +467,152 @@ func (s *Scheduler) GetAllFailureRecords() map[string][]task.FailureRecord {
 	}
 
 	return s.failureRecords
+}
+
+// RetryFailedTask 基于失败记录重试任务
+// taskID: 任务ID
+// recordID: 失败记录ID，为空则使用最新的失败记录
+func (s *Scheduler) RetryFailedTask(taskID string, recordID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 获取失败记录
+	var targetRecord *task.FailureRecord
+
+	// 优先从Redis获取最新的失败记录
+	if s.persistence != nil {
+		records, err := s.persistence.LoadFailureRecords(taskID)
+		if err == nil && len(records) > 0 {
+			if recordID != "" {
+				// 查找指定的失败记录
+				for i := range records {
+					if records[i].ID == recordID {
+						targetRecord = &records[i]
+						break
+					}
+				}
+			} else {
+				// 使用最新的失败记录（列表末尾）
+				targetRecord = &records[len(records)-1]
+			}
+		}
+	}
+
+	// 如果Redis中没有找到，从内存中查找
+	if targetRecord == nil {
+		records, exists := s.failureRecords[taskID]
+		if !exists || len(records) == 0 {
+			return fmt.Errorf("no failure records found for task %s", taskID)
+		}
+
+		if recordID != "" {
+			// 查找指定的失败记录
+			for i := range records {
+				if records[i].ID == recordID {
+					targetRecord = &records[i]
+					break
+				}
+			}
+		} else {
+			// 使用最新的失败记录
+			targetRecord = &records[len(records)-1]
+		}
+	}
+
+	if targetRecord == nil {
+		return fmt.Errorf("failure record not found: taskID=%s, recordID=%s", taskID, recordID)
+	}
+
+	// 查找任务
+	t, exists := s.taskMap[taskID]
+	if !exists {
+		// 任务不存在，尝试从已取消任务中查找
+		t, exists = s.cancelledTasks[taskID]
+		if !exists {
+			return fmt.Errorf("task not found: %s", taskID)
+		}
+	}
+
+	// 重置任务状态和重试次数
+	t.SetStatus(task.TaskStatusPending)
+	t.ResetRetry()
+
+	// 立即执行任务
+	t.SetNextExecTime(time.Now())
+
+	// 如果任务已取消，需要从取消列表中移除并重新添加到任务队列
+	if _, exists := s.cancelledTasks[taskID]; exists {
+		delete(s.cancelledTasks, taskID)
+		s.taskMap[taskID] = t
+		heap.Push(s.heap, t)
+
+		// 保存任务状态到Redis
+		if s.persistence != nil {
+			s.persistence.SaveTask(t)
+		}
+	} else if !exists {
+		// 任务是新创建的，添加到任务队列
+		s.taskMap[taskID] = t
+		heap.Push(s.heap, t)
+
+		// 保存任务状态到Redis
+		if s.persistence != nil {
+			s.persistence.SaveTask(t)
+		}
+	}
+
+	return nil
+}
+
+// DeleteFailureRecord 删除指定的失败记录
+// taskID: 任务ID
+// recordID: 失败记录ID
+func (s *Scheduler) DeleteFailureRecord(taskID string, recordID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 从Redis中删除
+	if s.persistence != nil {
+		err := s.persistence.DeleteFailureRecord(taskID, recordID)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 从内存中删除
+	if records, exists := s.failureRecords[taskID]; exists {
+		var remainingRecords []task.FailureRecord
+		for _, record := range records {
+			if record.ID != recordID {
+				remainingRecords = append(remainingRecords, record)
+			}
+		}
+		if len(remainingRecords) > 0 {
+			s.failureRecords[taskID] = remainingRecords
+		} else {
+			delete(s.failureRecords, taskID)
+		}
+	}
+
+	return nil
+}
+
+// DeleteAllFailureRecords 删除指定任务的所有失败记录
+// taskID: 任务ID
+func (s *Scheduler) DeleteAllFailureRecords(taskID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 从Redis中删除
+	if s.persistence != nil {
+		err := s.persistence.DeleteAllFailureRecords(taskID)
+		if err != nil {
+			return err
+		}
+	}
+
+	// 从内存中删除
+	delete(s.failureRecords, taskID)
+
+	return nil
 }

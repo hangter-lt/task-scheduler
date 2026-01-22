@@ -245,3 +245,47 @@ func (r *RedisPersistence) LoadAllFailureRecords() (map[string][]task.FailureRec
 
 	return allRecords, nil
 }
+
+// DeleteFailureRecord 删除指定的失败记录
+func (r *RedisPersistence) DeleteFailureRecord(taskID string, recordID string) error {
+	key := "failure:" + taskID
+	
+	// 获取所有失败记录
+	records, err := r.LoadFailureRecords(taskID)
+	if err != nil {
+		return err
+	}
+	
+	// 过滤掉要删除的记录
+	var remainingRecords []task.FailureRecord
+	for _, record := range records {
+		if record.ID != recordID {
+			remainingRecords = append(remainingRecords, record)
+		}
+	}
+	
+	// 重新保存过滤后的记录
+	pipe := r.client.Pipeline()
+	
+	// 删除原有的所有记录
+	pipe.Del(r.ctx, key)
+	
+	// 添加过滤后的记录
+	for _, record := range remainingRecords {
+		data, err := json.Marshal(record)
+		if err != nil {
+			continue
+		}
+		pipe.RPush(r.ctx, key, data)
+	}
+	
+	// 执行管道命令
+	_, err = pipe.Exec(r.ctx)
+	return err
+}
+
+// DeleteAllFailureRecords 删除指定任务的所有失败记录
+func (r *RedisPersistence) DeleteAllFailureRecords(taskID string) error {
+	key := "failure:" + taskID
+	return r.client.Del(r.ctx, key).Err()
+}
