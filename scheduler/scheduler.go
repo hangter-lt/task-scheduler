@@ -271,10 +271,6 @@ func (s *Scheduler) Run() {
 			if waitDur <= 0 {
 				// 从堆中弹出任务
 				execTask := heap.Pop(s.heap).(task.Task)
-				if execTask.Type() == task.TaskTypeOnce {
-					// 一次性任务执行后从映射中移除
-					delete(s.taskMap, execTask.ID())
-				}
 				s.mu.Unlock()
 
 				// 提交任务到执行器异步执行
@@ -499,7 +495,8 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.
 	} else if t.Type() == task.TaskTypeOnce {
 		// 一次性任务执行完成，设置状态为Completed
 		t.SetStatus(task.TaskStatusCompleted)
-
+		// 从任务映射中移除
+		delete(s.taskMap, t.ID())
 	}
 
 	// 保存完成状态到Redis
