@@ -30,7 +30,8 @@ func init() {
 	}
 
 	// 检查是否有Redis配置
-	redisAddr := "localhost:6379"
+	// redisAddr := "localhost:6379"
+	redisAddr := ""
 	if redisAddr != "" {
 		redisPersistence = persistence.NewRedisPersistence(redisAddr, "", 2)
 		sch = scheduler.NewSchedulerWithPersistence(exec, redisPersistence, "web-server")

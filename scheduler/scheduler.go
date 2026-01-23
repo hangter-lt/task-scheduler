@@ -410,6 +410,14 @@ func (s *Scheduler) executeTask(t task.Task) {
 // 周期性任务重新入堆
 func (s *Scheduler) resetCronTask(t task.Task) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 检查任务是否已被取消
+	if _, isCancelled := s.cancelledTasks[t.ID()]; isCancelled {
+		// 任务已被取消，不再重新入堆
+		return
+	}
+
 	if t.Type() == task.TaskTypeCron {
 		t.ResetRetry()
 		t.SetStatus(task.TaskStatusPending)
@@ -420,7 +428,6 @@ func (s *Scheduler) resetCronTask(t task.Task) {
 			s.persistence.SaveTask(t)
 		}
 	}
-	s.mu.Unlock()
 }
 
 // handleTaskResult 处理任务执行结果
@@ -431,6 +438,12 @@ func (s *Scheduler) resetCronTask(t task.Task) {
 func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.Time, duration time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// 检查任务是否已被取消
+	if _, isCancelled := s.cancelledTasks[t.ID()]; isCancelled {
+		// 任务已被取消，不再处理执行结果
+		return
+	}
 
 	// 失败重试逻辑
 	if execErr != nil {
