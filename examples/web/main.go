@@ -48,12 +48,13 @@ func init() {
 	task.RegisterFunc("example-func", func(ctx context.Context, params any) error {
 		fmt.Printf("执行示例任务，参数: %v\n", params)
 		fmt.Printf("time.Now(): %v\n", time.Now())
-		time.Sleep(1 * time.Second)
+		time.Sleep(3 * time.Second)
 		return nil
 	})
 
 	task.RegisterFunc("error-func", func(ctx context.Context, params any) error {
 		fmt.Printf("执行错误示例任务，参数: %v\n", params)
+		time.Sleep(1 * time.Second)
 		return fmt.Errorf("模拟任务执行失败")
 	})
 }
@@ -192,8 +193,6 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 		case "immediate":
 			// 将params转换为map[string]any
 			fmt.Println("处理立即执行任务")
-			fmt.Printf("请求参数: %+v\n", req)
-			fmt.Printf("Params类型: %T\n", req.Params)
 			paramsMap, ok := req.Params.(map[string]any)
 			if !ok {
 				fmt.Println("参数格式无效")
