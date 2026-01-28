@@ -109,9 +109,9 @@ func (s *Scheduler) Register(t task.Task) {
 	}
 }
 
-// Cancel 取消指定ID的任务
-// id: 要取消的任务ID
-func (s *Scheduler) Cancel(id string) {
+// Suspend 挂起指定ID的任务
+// id: 要挂起的任务ID
+func (s *Scheduler) Suspend(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -137,7 +137,7 @@ func (s *Scheduler) Cancel(id string) {
 		}
 	}
 
-	t.SetStatus(task.TaskStatusCanceled)
+	t.SetStatus(task.TaskStatusSuspended)
 	// 将任务保存到已取消任务映射中
 	s.cancelledTasks[id] = t
 
@@ -179,9 +179,9 @@ func (s *Scheduler) Resume(id string) {
 	// 确保下次执行时间正确
 	// 对于一次性任务，如果执行时间已过，使用当前时间
 	// 对于周期任务，重新计算下次执行时间
-	if t.NextExecTime().Before(time.Now()) {
+	if t.NextExecTime() <= time.Now().UnixMilli() {
 		if t.Type() == task.TaskTypeOnce {
-			t.SetNextExecTime(time.Now())
+			t.SetNextExecTime(time.Now().UnixMilli())
 		} else {
 			t.UpdateNextExecTime()
 		}
@@ -211,8 +211,13 @@ func (s *Scheduler) ExecuteTaskImmediately(id string) error {
 		return fmt.Errorf("任务不存在或已取消")
 	}
 
+	// 检查任务状态是否为Pending或Running
+	if t.Status() == task.TaskStatusRunning {
+		return fmt.Errorf("任务状态Running，无法立即执行")
+	}
+
 	// 将任务的下次执行时间设置为当前时间，使其立即执行
-	t.SetNextExecTime(time.Now())
+	t.SetNextExecTime(time.Now().UnixMilli())
 
 	// 重新调整堆结构，确保任务在堆顶
 	// 先从堆中移除任务
@@ -264,8 +269,7 @@ func (s *Scheduler) Run() {
 
 			// 获取堆顶任务（下次执行时间最早的任务）
 			nextTask := s.heap.Peek()
-			now := time.Now()
-			waitDur := nextTask.NextExecTime().Sub(now)
+			waitDur := nextTask.NextExecTime() - time.Now().UnixMilli()
 
 			// 如果任务时间到了，执行任务
 			if waitDur <= 0 {
@@ -304,9 +308,8 @@ func (s *Scheduler) Run() {
 						s.mu.Unlock()
 						break
 					}
-
 					// 检查任务时间是否到了
-					if currentTopTask.NextExecTime().Before(time.Now()) {
+					if currentTopTask.NextExecTime() <= time.Now().UnixMilli() {
 						// 任务时间到了，跳出循环执行
 						s.mu.Unlock()
 						break
@@ -382,24 +385,24 @@ func (s *Scheduler) executeTask(t task.Task) {
 	}
 
 	// 记录执行开始时间
-	startTime := time.Now()
+	startTime := time.Now().UnixMilli()
 
 	// 提交到异步执行器
 	err := s.executor.Submit(ctx, t, func(execErr error) {
 		// 计算执行耗时
-		duration := time.Since(startTime)
+		duration := time.Now().UnixMilli() - startTime
 		// 任务完成后取消上下文
 		defer cancel()
 		// 处理任务执行结果
-		s.handleTaskResult(t, execErr, startTime, duration)
+		s.handleTaskResult(t, execErr, startTime, time.Duration(duration))
 	})
 
 	if err != nil {
 		// 计算执行耗时
-		duration := time.Since(startTime)
+		duration := time.Now().UnixMilli() - startTime
 		// 提交任务失败
 		cancel()
-		s.handleTaskResult(t, err, startTime, duration)
+		s.handleTaskResult(t, err, startTime, time.Duration(duration))
 	}
 }
 
@@ -431,7 +434,7 @@ func (s *Scheduler) resetCronTask(t task.Task) {
 // execErr: 执行错误，nil表示成功
 // startTime: 执行开始时间
 // duration: 执行耗时
-func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.Time, duration time.Duration) {
+func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime int64, duration time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -451,7 +454,7 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.
 			ExecTime:  startTime,
 			Duration:  duration,
 			Error:     execErr.Error(),
-			CreatedAt: time.Now(),
+			CreatedAt: time.Now().UnixMilli(),
 		}
 
 		// 保存失败记录到Redis
@@ -466,7 +469,7 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.
 			// 增加重试次数
 			t.RetryPolicy().CurrentRetry++
 			// 计算重试执行时间（当前时间+重试间隔）
-			retryTime := time.Now().Add(t.RetryPolicy().RetryDelay)
+			retryTime := time.Now().Add(t.RetryPolicy().RetryDelay).UnixMilli()
 			t.SetNextExecTime(retryTime)
 			// 重置任务状态为Pending，准备重试
 			t.SetStatus(task.TaskStatusPending)
@@ -492,17 +495,21 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime time.
 		// 重新添加到任务队列
 		s.taskMap[t.ID()] = t
 		heap.Push(s.heap, t)
+
+		// 保存完成状态到Redis
+		if s.persistence != nil {
+			s.persistence.SaveTask(t)
+		}
 	} else if t.Type() == task.TaskTypeOnce {
-		// 一次性任务执行完成，设置状态为Completed
-		t.SetStatus(task.TaskStatusCompleted)
-		// 从任务映射中移除
+		// 一次性任务执行完成， 从任务映射中移除
 		delete(s.taskMap, t.ID())
+
+		// redis中删除任务
+		if s.persistence != nil {
+			s.persistence.DeleteTask(t.ID())
+		}
 	}
 
-	// 保存完成状态到Redis
-	if s.persistence != nil {
-		s.persistence.SaveTask(t)
-	}
 }
 
 // Stop 停止调度器
@@ -632,7 +639,7 @@ func (s *Scheduler) RetryFailedTask(taskID string, recordID string) error {
 	t.ResetRetry()
 
 	// 立即执行任务
-	t.SetNextExecTime(time.Now())
+	t.SetNextExecTime(time.Now().UnixMilli())
 
 	// 如果任务已取消，需要从取消列表中移除并重新添加到任务队列
 	if _, exists := s.cancelledTasks[taskID]; exists {

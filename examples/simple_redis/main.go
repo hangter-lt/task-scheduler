@@ -50,7 +50,7 @@ func main() {
 	// if err != nil {
 	// 	panic(err)
 	// }
-	once := task.NewOnceTask("redis-once-2", time.Now().Add(time.Second*5), time.Minute*1, nil, "redis-example-func", onceParams)
+	once := task.NewOnceTask("redis-once-2", time.Now().Add(time.Second*5).UnixMilli(), time.Minute*1, nil, "redis-example-func", onceParams)
 
 	// 注册任务
 	sch.Register(cron)
@@ -63,7 +63,7 @@ func main() {
 
 	// 取消周期任务
 	fmt.Println("取消周期任务...")
-	sch.Cancel("redis-cron-1")
+	sch.Suspend("redis-cron-1")
 
 	// 等待一段时间
 	time.Sleep(time.Second * 10)

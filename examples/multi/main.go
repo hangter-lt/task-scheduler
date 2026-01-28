@@ -48,7 +48,7 @@ func main() {
 	// if err != nil {
 	// 	panic(err)
 	// }
-	once := task.NewOnceTask("redis-once-1", time.Now().Add(time.Second*5), time.Minute*1, nil, "redis-example-func", onceParams)
+	once := task.NewOnceTask("redis-once-1", time.Now().Add(time.Second*5).UnixMilli(), time.Minute*1, nil, "redis-example-func", onceParams)
 
 	// 注册任务
 	sch.Register(cron)

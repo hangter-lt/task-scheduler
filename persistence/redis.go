@@ -128,10 +128,9 @@ func (r *RedisPersistence) LoadTask(id string) (task.Task, error) {
 
 	switch taskType {
 	case task.TaskTypeOnce:
-		execTime, _ := time.Parse(time.RFC3339, taskData["nextExecTime"].(string))
 		t = task.NewOnceTask(
 			taskData["id"].(string),
-			execTime,
+			taskData["nextExecTime"].(int64),
 			time.Duration(int(taskData["timeout"].(float64))),
 			&retryPolicy,
 			task.FuncID(taskData["funcID"].(string)),
@@ -249,13 +248,13 @@ func (r *RedisPersistence) LoadAllFailureRecords() (map[string][]task.FailureRec
 // DeleteFailureRecord 删除指定的失败记录
 func (r *RedisPersistence) DeleteFailureRecord(taskID string, recordID string) error {
 	key := "failure:" + taskID
-	
+
 	// 获取所有失败记录
 	records, err := r.LoadFailureRecords(taskID)
 	if err != nil {
 		return err
 	}
-	
+
 	// 过滤掉要删除的记录
 	var remainingRecords []task.FailureRecord
 	for _, record := range records {
@@ -263,13 +262,13 @@ func (r *RedisPersistence) DeleteFailureRecord(taskID string, recordID string) e
 			remainingRecords = append(remainingRecords, record)
 		}
 	}
-	
+
 	// 重新保存过滤后的记录
 	pipe := r.client.Pipeline()
-	
+
 	// 删除原有的所有记录
 	pipe.Del(r.ctx, key)
-	
+
 	// 添加过滤后的记录
 	for _, record := range remainingRecords {
 		data, err := json.Marshal(record)
@@ -278,7 +277,7 @@ func (r *RedisPersistence) DeleteFailureRecord(taskID string, recordID string) e
 		}
 		pipe.RPush(r.ctx, key, data)
 	}
-	
+
 	// 执行管道命令
 	_, err = pipe.Exec(r.ctx)
 	return err

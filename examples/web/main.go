@@ -94,7 +94,7 @@ type TaskResponse struct {
 	ID           string      `json:"id"`
 	Type         string      `json:"type"`
 	Status       string      `json:"status"`
-	NextExecTime time.Time   `json:"nextExecTime"`
+	NextExecTime int64       `json:"nextExecTime"`
 	FuncID       string      `json:"funcId"`
 	Params       interface{} `json:"params"`
 	CronExpr     string      `json:"cronExpr,omitempty"`
@@ -189,7 +189,7 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			newTask = task.NewOnceTask(req.ID, execTime, timeout, retryPolicy, task.FuncID(req.FuncID), req.Params)
+			newTask = task.NewOnceTask(req.ID, execTime.UnixMilli(), timeout, retryPolicy, task.FuncID(req.FuncID), req.Params)
 		case "immediate":
 			// 将params转换为map[string]any
 			fmt.Println("处理立即执行任务")
@@ -224,7 +224,6 @@ func handleTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		fmt.Printf("newTask: %v\n", newTask)
 		// 注册任务
 		fmt.Printf("注册任务: %+v\n", newTask)
 		sch.Register(newTask)
@@ -258,7 +257,7 @@ func handleTaskOperations(w http.ResponseWriter, r *http.Request) {
 	if len(path) > len("/cancel") && path[len(path)-len("/cancel"):] == "/cancel" {
 		// 取消任务
 		taskID := path[:len(path)-len("/cancel")]
-		sch.Cancel(taskID)
+		sch.Suspend(taskID)
 		respondWithJSON(w, http.StatusOK, Response{
 			Code:    0,
 			Message: "任务取消成功",

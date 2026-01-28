@@ -20,8 +20,7 @@ type TaskStatus string
 const (
 	TaskStatusPending   TaskStatus = "pending"   // 待执行
 	TaskStatusRunning   TaskStatus = "running"   // 执行中
-	TaskStatusCompleted TaskStatus = "completed" // 已完成（一次性任务独有）
-	TaskStatusCanceled  TaskStatus = "canceled"  // 已取消
+	TaskStatusSuspended TaskStatus = "suspended" // 已挂起
 )
 
 // RetryPolicy 任务重试策略
@@ -36,10 +35,10 @@ type FailureRecord struct {
 	ID        string        `json:"id"`        // 失败记录ID
 	TaskID    string        `json:"taskId"`    // 任务ID
 	Params    any           `json:"params"`    // 任务入参
-	ExecTime  time.Time     `json:"execTime"`  // 执行时间
+	ExecTime  int64         `json:"execTime"`  // 执行时间
 	Duration  time.Duration `json:"duration"`  // 执行耗时
 	Error     string        `json:"error"`     // 失败原因
-	CreatedAt time.Time     `json:"createdAt"` // 记录创建时间
+	CreatedAt int64         `json:"createdAt"` // 记录创建时间
 }
 
 // Task 任务接口，所有任务类型都必须实现此接口
@@ -47,11 +46,11 @@ type Task interface {
 	ID() string                    // 获取任务ID
 	Type() TaskType                // 获取任务类型(once/cron)
 	Status() TaskStatus            // 获取任务状态
-	NextExecTime() time.Time       // 获取下次执行时间
+	NextExecTime() int64           // 获取下次执行时间
 	Run(ctx context.Context) error // 执行任务
 	Timeout() time.Duration        // 获取任务超时时间
 	RetryPolicy() *RetryPolicy     // 获取重试策略
-	SetNextExecTime(time.Time)     // 设置下次执行时间
+	SetNextExecTime(int64)         // 设置下次执行时间
 	SetStatus(TaskStatus)          // 设置任务状态
 	ResetRetry()                   // 重置重试次数
 	UpdateNextExecTime()           // 更新下次执行时间（主要用于周期任务）
@@ -65,7 +64,7 @@ type BaseTask struct {
 	id           string        // 任务唯一标识
 	timeout      time.Duration // 任务超时时间
 	retryPolicy  *RetryPolicy  // 重试策略
-	nextExecTime time.Time     // 下次执行时间
+	nextExecTime int64         // 下次执行时间
 	taskType     TaskType      // 任务类型
 	funcID       FuncID        // 任务执行函数标识符
 	params       any           // 任务通用参数
@@ -83,7 +82,7 @@ func (b *BaseTask) Type() TaskType {
 }
 
 // NextExecTime 获取下次执行时间
-func (b *BaseTask) NextExecTime() time.Time {
+func (b *BaseTask) NextExecTime() int64 {
 	return b.nextExecTime
 }
 
@@ -98,7 +97,7 @@ func (b *BaseTask) RetryPolicy() *RetryPolicy {
 }
 
 // SetNextExecTime 设置下次执行时间
-func (b *BaseTask) SetNextExecTime(t time.Time) {
+func (b *BaseTask) SetNextExecTime(t int64) {
 	b.nextExecTime = t
 }
 

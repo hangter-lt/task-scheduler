@@ -7,7 +7,7 @@ type TaskHeap []task.Task
 
 // 实现container/heap接口
 func (h TaskHeap) Len() int           { return len(h) }
-func (h TaskHeap) Less(i, j int) bool { return h[i].NextExecTime().Before(h[j].NextExecTime()) }
+func (h TaskHeap) Less(i, j int) bool { return h[i].NextExecTime() < h[j].NextExecTime() }
 func (h TaskHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 
 func (h *TaskHeap) Push(x any) {

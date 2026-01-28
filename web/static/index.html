@@ -355,7 +355,7 @@
             };
             
             if (formData.type === 'once') {
-                formData.execTime = document.getElementById('exec-time').value + ':00Z';
+                formData.execTime = document.getElementById('exec-time').value + ':00+08:00';
             } else if (formData.type === 'cron') {
                 formData.cronExpr = document.getElementById('cron-expr').value;
             }

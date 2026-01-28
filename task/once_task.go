@@ -11,7 +11,7 @@ type OnceTask struct {
 
 func NewOnceTask(
 	id string,
-	execTime time.Time,
+	execTime int64,
 	timeout time.Duration,
 	retryPolicy *RetryPolicy,
 	funcID FuncID,
@@ -47,10 +47,10 @@ func NewImmediateTask(
 	params map[string]any,
 ) *OnceTask {
 	// 调用NewOnceTask，传入当前时间作为执行时间
-	return NewOnceTask(id, time.Now(), timeout, retryPolicy, funcID, params)
+	return NewOnceTask(id, time.Now().UnixMilli(), timeout, retryPolicy, funcID, params)
 }
 
 // 清空下次执行时间
 func (o *OnceTask) UpdateNextExecTime() {
-	o.SetNextExecTime(time.Time{})
+	o.SetNextExecTime(0)
 }

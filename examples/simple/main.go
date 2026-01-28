@@ -29,7 +29,7 @@ func main() {
 
 	// 指定时间的单次任务
 	onceParams := map[string]any{"name": "once-task", "value": 1}
-	once := task.NewOnceTask("1", time.Now().Add(time.Second*1), 0, nil, "example-func-1", onceParams)
+	once := task.NewOnceTask("1", time.Now().Add(time.Second*1).UnixMilli(), 0, nil, "example-func-1", onceParams)
 
 	sch.Register(once)
 
