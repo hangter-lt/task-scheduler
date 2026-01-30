@@ -19,6 +19,7 @@ type Scheduler struct {
 	heap           *TaskHeap                       // 任务最小堆，按下次执行时间排序
 	taskMap        map[string]task.Task            // 任务ID->任务的映射，用于快速查找和取消任务
 	cancelledTasks map[string]task.Task            // 已取消任务的映射，用于恢复任务
+	failureTasks   map[string]task.Task            // 失败任务的映射，用于存储失败的任务，多次失败时可覆盖
 	failureRecords map[string][]task.FailureRecord // 任务失败记录，key为任务ID，value为失败记录列表
 	mu             sync.Mutex                      // 并发锁，保护共享资源
 	executor       *executor.Executor              // 任务执行器，用于实际执行任务
@@ -38,6 +39,7 @@ func NewScheduler(exec *executor.Executor) *Scheduler {
 		heap:           h,
 		taskMap:        make(map[string]task.Task),
 		cancelledTasks: make(map[string]task.Task),
+		failureTasks:   make(map[string]task.Task),
 		failureRecords: make(map[string][]task.FailureRecord),
 		mu:             sync.Mutex{},
 		executor:       exec,
@@ -57,6 +59,7 @@ func NewSchedulerWithPersistence(exec *executor.Executor, persistence *persisten
 		heap:           h,
 		taskMap:        make(map[string]task.Task),
 		cancelledTasks: make(map[string]task.Task),
+		failureTasks:   make(map[string]task.Task),
 		failureRecords: make(map[string][]task.FailureRecord),
 		mu:             sync.Mutex{},
 		executor:       exec,
@@ -465,6 +468,9 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime int64
 			s.failureRecords[t.ID()] = append(s.failureRecords[t.ID()], failureRecord)
 		}
 
+		// 将失败任务添加到failureTasks映射中
+		s.failureTasks[t.ID()] = t
+
 		if t.RetryPolicy().MaxRetry > t.RetryPolicy().CurrentRetry {
 			// 增加重试次数
 			t.RetryPolicy().CurrentRetry++
@@ -692,6 +698,7 @@ func (s *Scheduler) DeleteFailureRecord(taskID string, recordID string) error {
 			s.failureRecords[taskID] = remainingRecords
 		} else {
 			delete(s.failureRecords, taskID)
+			delete(s.failureTasks, taskID)
 		}
 	}
 
@@ -714,6 +721,7 @@ func (s *Scheduler) DeleteAllFailureRecords(taskID string) error {
 
 	// 从内存中删除
 	delete(s.failureRecords, taskID)
+	delete(s.failureTasks, taskID)
 
 	return nil
 }

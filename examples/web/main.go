@@ -54,7 +54,7 @@ func init() {
 
 	task.RegisterFunc("error-func", func(ctx context.Context, params any) error {
 		fmt.Printf("执行错误示例任务，参数: %v\n", params)
-		time.Sleep(1 * time.Second)
+		time.Sleep(5 * time.Second)
 		return fmt.Errorf("模拟任务执行失败")
 	})
 }

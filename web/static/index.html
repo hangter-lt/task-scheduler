@@ -405,7 +405,7 @@
                             <td>${task.funcId}</td>
                             <td>
                                 ${task.status === 'pending' ? `<button class="danger" onclick="cancelTask('${task.id}')">取消</button>` : ''}
-                                ${task.status === 'canceled' ? `<button class="success" onclick="resumeTask('${task.id}')">恢复</button>` : ''}
+                                ${task.status === 'suspended' ? `<button class="success" onclick="resumeTask('${task.id}')">恢复</button>` : ''}
                                 <button class="primary" onclick="executeTask('${task.id}')">立即执行</button>
                             </td>
                         `;
