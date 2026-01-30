@@ -398,7 +398,7 @@
                     data.data.forEach(task => {
                         const row = document.createElement('tr');
                         row.innerHTML = `
-                            <td><a href="#" onclick="showTaskFailures('${task.id}')">${task.id}</a></td>
+                            <td>${task.id}</td>
                             <td>${task.type}</td>
                             <td><span class="status ${task.status}">${task.status}</span></td>
                             <td>${task.nextExecTime}</td>
@@ -429,7 +429,7 @@
                     } else {
                         // 添加表格上方的重试按钮
                         html += `<div class="retry-container">
-                            <button onclick="retryTask('${taskId}')" class="retry-all-button">重试最新失败记录</button>
+                            <button onclick="retryTask('${taskId}')" class="retry-all-button">重试</button>
                         </div>`;
                         
                         html += `
@@ -441,6 +441,7 @@
                                         <th>执行耗时</th>
                                         <th>失败原因</th>
                                         <th>参数</th>
+                                        <th>操作</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -454,6 +455,9 @@
                                     <td>${record.duration}</td>
                                     <td>${record.error}</td>
                                     <td>${JSON.stringify(record.params)}</td>
+                                    <td>
+                                        <button class="danger" onclick="deleteFailureRecord('${taskId}', '${record.id}')">删除</button>
+                                    </td>
                                 </tr>
                             `;
                         });
@@ -610,56 +614,53 @@
 
         // 加载失败记录
         function loadFailures() {
-            fetch('/api/failures')
+            fetch('/api/failure-tasks')
             .then(response => response.json())
             .then(data => {
                 if (data.code === 0) {
                     const content = document.getElementById('failures-content');
                     content.innerHTML = '';
                     
-                    if (Object.keys(data.data).length === 0) {
+                    const tasks = data.data;
+                    
+                    if (tasks.length === 0) {
                         content.innerHTML = '<p>暂无失败记录</p>';
                         return;
                     }
                     
-                    for (const taskId in data.data) {
-                        const records = data.data[taskId];
-                        if (records.length > 0) {
-                            const taskSection = document.createElement('div');
-                            taskSection.innerHTML = `<h3>任务: ${taskId}</h3>`;
-                            
-                            const table = document.createElement('table');
-                            table.innerHTML = `
-                                <thead>
-                                    <tr>
-                                        <th>记录ID</th>
-                                        <th>执行时间</th>
-                                        <th>执行耗时</th>
-                                        <th>失败原因</th>
-                                        <th>参数</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                </tbody>
-                            `;
-                            
-                            const tbody = table.querySelector('tbody');
-                            records.forEach(record => {
-                                const row = document.createElement('tr');
-                                row.innerHTML = `
-                                    <td>${record.id}</td>
-                                    <td>${record.execTime}</td>
-                                    <td>${record.duration}</td>
-                                    <td>${record.error}</td>
-                                    <td>${JSON.stringify(record.params)}</td>
-                                `;
-                                tbody.appendChild(row);
-                            });
-                            
-                            taskSection.appendChild(table);
-                            content.appendChild(taskSection);
-                        }
-                    }
+                    const table = document.createElement('table');
+                    table.innerHTML = `
+                        <thead>
+                            <tr>
+                                <th>任务ID</th>
+                                <th>类型</th>
+                                <th>函数ID</th>
+                                <th>下次执行时间</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        </tbody>
+                    `;
+                    
+                    const tbody = table.querySelector('tbody');
+                    tasks.forEach(task => {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td>${task.id}</td>
+                            <td>${task.type}</td>
+                            <td>${task.funcId}</td>
+                            <td>${task.nextExecTime}</td>
+                            <td>
+                                <button class="primary" onclick="showTaskFailures('${task.id}')">查看失败记录</button>
+                                <button class="success" onclick="retryTask('${task.id}')">重试</button>
+                                <button class="danger" onclick="clearTaskFailures('${task.id}')">清空记录</button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    
+                    content.appendChild(table);
                 }
             });
         }
@@ -792,6 +793,63 @@
                 document.getElementById('action-error').style.display = 'block';
                 document.getElementById('action-success').style.display = 'none';
             });
+        }
+
+        // 清空任务失败记录
+        function clearTaskFailures(taskId) {
+            if (confirm('确定要清空此任务的所有失败记录吗？')) {
+                fetch(`/api/failures/${taskId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.code === 0) {
+                        document.getElementById('action-success').style.display = 'block';
+                        document.getElementById('action-error').style.display = 'none';
+                        loadFailures();
+                    } else {
+                        document.getElementById('action-error').textContent = data.message;
+                        document.getElementById('action-error').style.display = 'block';
+                        document.getElementById('action-success').style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('action-error').textContent = '清空失败记录失败: ' + error.message;
+                    document.getElementById('action-error').style.display = 'block';
+                    document.getElementById('action-success').style.display = 'none';
+                });
+            }
+        }
+
+        // 删除单个失败记录
+        function deleteFailureRecord(taskId, recordId) {
+            if (confirm('确定要删除此失败记录吗？')) {
+                fetch(`/api/failures/${taskId}/${recordId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.code === 0) {
+                        document.getElementById('action-success').style.display = 'block';
+                        document.getElementById('action-error').style.display = 'none';
+                        // 重新加载失败记录
+                        const modal = document.querySelector('.modal');
+                        if (modal) {
+                            modal.remove();
+                        }
+                        showTaskFailures(taskId);
+                    } else {
+                        document.getElementById('action-error').textContent = data.message;
+                        document.getElementById('action-error').style.display = 'block';
+                        document.getElementById('action-success').style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('action-error').textContent = '删除失败记录失败: ' + error.message;
+                    document.getElementById('action-error').style.display = 'block';
+                    document.getElementById('action-success').style.display = 'none';
+                });
+            }
         }
     </script>
 </body>

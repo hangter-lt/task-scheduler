@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hangter-lt/task-scheduler/executor"
@@ -65,6 +66,7 @@ func main() {
 	http.HandleFunc("/api/tasks/", handleTaskOperations)
 	http.HandleFunc("/api/failures", handleFailures)
 	http.HandleFunc("/api/failures/", handleFailureDetail)
+	http.HandleFunc("/api/failure-tasks", handleFailureTasks)
 	http.HandleFunc("/api/funcs", handleFuncs)
 	http.HandleFunc("/test", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "服务器正常响应")
@@ -275,9 +277,8 @@ func handleTaskOperations(w http.ResponseWriter, r *http.Request) {
 	} else if len(path) > len("/retry") && path[len(path)-len("/retry"):] == "/retry" {
 		// 重试任务
 		taskID := path[:len(path)-len("/retry")]
-		// 从查询参数中获取recordId
-		recordID := r.URL.Query().Get("recordId")
-		err := sch.RetryFailedTask(taskID, recordID)
+
+		err := sch.RetryFailedTask(taskID)
 		if err != nil {
 			respondWithJSON(w, http.StatusInternalServerError, Response{
 				Code:    500,
@@ -347,9 +348,9 @@ func handleFailures(w http.ResponseWriter, r *http.Request) {
 func handleFailureDetail(w http.ResponseWriter, r *http.Request) {
 	setupCORS(&w, r)
 
-	// 提取任务ID
-	taskID := r.URL.Path[len("/api/failures/"):]
-	if taskID == "" {
+	// 提取任务ID和记录ID
+	path := r.URL.Path[len("/api/failures/"):]
+	if path == "" {
 		respondWithJSON(w, http.StatusBadRequest, Response{
 			Code:    400,
 			Message: "任务ID不能为空",
@@ -357,13 +358,53 @@ func handleFailureDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 获取任务的失败记录
-	records := sch.GetFailureRecords(taskID)
-	respondWithJSON(w, http.StatusOK, Response{
-		Code:    0,
-		Message: "成功",
-		Data:    records,
-	})
+	// 检查是否有记录ID
+	parts := strings.Split(path, "/")
+	taskID := parts[0]
+
+	if r.Method == http.MethodGet {
+		// 获取任务的失败记录
+		records := sch.GetFailureRecords(taskID)
+		respondWithJSON(w, http.StatusOK, Response{
+			Code:    0,
+			Message: "成功",
+			Data:    records,
+		})
+	} else if r.Method == http.MethodDelete {
+		// 删除失败记录
+		if len(parts) == 2 {
+			// 删除单个失败记录
+			recordID := parts[1]
+			err := sch.DeleteFailureRecord(taskID, recordID)
+			if err != nil {
+				respondWithJSON(w, http.StatusInternalServerError, Response{
+					Code:    500,
+					Message: fmt.Sprintf("删除失败记录失败: %v", err),
+				})
+				return
+			}
+			respondWithJSON(w, http.StatusOK, Response{
+				Code:    0,
+				Message: "删除失败记录成功",
+			})
+		} else {
+			// 清除任务的所有失败记录
+			err := sch.DeleteAllFailureRecords(taskID)
+			if err != nil {
+				respondWithJSON(w, http.StatusInternalServerError, Response{
+					Code:    500,
+					Message: fmt.Sprintf("清除失败记录失败: %v", err),
+				})
+				return
+			}
+			respondWithJSON(w, http.StatusOK, Response{
+				Code:    0,
+				Message: "清除失败记录成功",
+			})
+		}
+	} else {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 // 处理函数列表请求
@@ -377,6 +418,30 @@ func handleFuncs(w http.ResponseWriter, r *http.Request) {
 			Code:    0,
 			Message: "成功",
 			Data:    funcs,
+		})
+	} else {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+// 处理失败任务列表请求
+func handleFailureTasks(w http.ResponseWriter, r *http.Request) {
+	setupCORS(&w, r)
+
+	if r.Method == http.MethodGet {
+		// 获取所有失败任务
+		tasks := sch.GetFailureTasks()
+
+		// 转换任务为响应结构
+		taskResponses := make([]TaskResponse, 0, len(tasks))
+		for _, t := range tasks {
+			taskResponses = append(taskResponses, taskToResponse(t))
+		}
+
+		respondWithJSON(w, http.StatusOK, Response{
+			Code:    0,
+			Message: "成功",
+			Data:    taskResponses,
 		})
 	} else {
 		w.WriteHeader(http.StatusMethodNotAllowed)

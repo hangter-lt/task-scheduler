@@ -469,6 +469,7 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime int64
 		}
 
 		// 将失败任务添加到failureTasks映射中
+		t.SetStatus(task.TaskStatusPending)
 		s.failureTasks[t.ID()] = t
 
 		if t.RetryPolicy().MaxRetry > t.RetryPolicy().CurrentRetry {
@@ -477,8 +478,8 @@ func (s *Scheduler) handleTaskResult(t task.Task, execErr error, startTime int64
 			// 计算重试执行时间（当前时间+重试间隔）
 			retryTime := time.Now().Add(t.RetryPolicy().RetryDelay).UnixMilli()
 			t.SetNextExecTime(retryTime)
-			// 重置任务状态为Pending，准备重试
-			t.SetStatus(task.TaskStatusPending)
+			// // 重置任务状态为Pending，准备重试
+			// t.SetStatus(task.TaskStatusPending)
 			// 重新添加到任务队列
 			s.taskMap[t.ID()] = t
 			heap.Push(s.heap, t)
@@ -570,59 +571,12 @@ func (s *Scheduler) GetAllFailureRecords() map[string][]task.FailureRecord {
 // RetryFailedTask 基于失败记录重试任务
 // taskID: 任务ID
 // recordID: 失败记录ID，为空则使用最新的失败记录
-func (s *Scheduler) RetryFailedTask(taskID string, recordID string) error {
+func (s *Scheduler) RetryFailedTask(taskID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// 获取失败记录
-	var targetRecord *task.FailureRecord
-
-	// 优先从Redis获取最新的失败记录
-	if s.persistence != nil {
-		records, err := s.persistence.LoadFailureRecords(taskID)
-		if err == nil && len(records) > 0 {
-			if recordID != "" {
-				// 查找指定的失败记录
-				for i := range records {
-					if records[i].ID == recordID {
-						targetRecord = &records[i]
-						break
-					}
-				}
-			} else {
-				// 使用最新的失败记录（列表末尾）
-				targetRecord = &records[len(records)-1]
-			}
-		}
-	}
-
-	// 如果Redis中没有找到，从内存中查找
-	if targetRecord == nil {
-		records, exists := s.failureRecords[taskID]
-		if !exists || len(records) == 0 {
-			return fmt.Errorf("no failure records found for task %s", taskID)
-		}
-
-		if recordID != "" {
-			// 查找指定的失败记录
-			for i := range records {
-				if records[i].ID == recordID {
-					targetRecord = &records[i]
-					break
-				}
-			}
-		} else {
-			// 使用最新的失败记录
-			targetRecord = &records[len(records)-1]
-		}
-	}
-
-	if targetRecord == nil {
-		return fmt.Errorf("failure record not found: taskID=%s, recordID=%s", taskID, recordID)
-	}
-
 	// 查找任务
-	t, exists := s.taskMap[taskID]
+	t, exists := s.failureTasks[taskID]
 	if !exists {
 		// 任务不存在，尝试从已取消任务中查找
 		t, exists = s.cancelledTasks[taskID]
@@ -640,32 +594,27 @@ func (s *Scheduler) RetryFailedTask(taskID string, recordID string) error {
 		}
 	}
 
+	// 任务运行中,不允许重试
+	if t.Status() == task.TaskStatusRunning {
+		return fmt.Errorf("task is running, can`t retrt: %s", taskID)
+	}
+
 	// 重置任务状态和重试次数
 	t.SetStatus(task.TaskStatusPending)
 	t.ResetRetry()
 
-	// 立即执行任务
+	// 设置执行任务时间(当前时间)
 	t.SetNextExecTime(time.Now().UnixMilli())
 
-	// 如果任务已取消，需要从取消列表中移除并重新添加到任务队列
-	if _, exists := s.cancelledTasks[taskID]; exists {
-		delete(s.cancelledTasks, taskID)
-		s.taskMap[taskID] = t
-		heap.Push(s.heap, t)
+	s.taskMap[taskID] = t
+	heap.Push(s.heap, t)
 
-		// 保存任务状态到Redis
-		if s.persistence != nil {
-			s.persistence.SaveTask(t)
-		}
-	} else if !exists {
-		// 任务是新创建的，添加到任务队列
-		s.taskMap[taskID] = t
-		heap.Push(s.heap, t)
+	// 如果任务已取消，需要从取消列表中移除
+	delete(s.cancelledTasks, taskID)
 
-		// 保存任务状态到Redis
-		if s.persistence != nil {
-			s.persistence.SaveTask(t)
-		}
+	// 保存任务状态到Redis
+	if s.persistence != nil {
+		s.persistence.SaveTask(t)
 	}
 
 	return nil
@@ -759,6 +708,42 @@ func (s *Scheduler) GetAllTasks() []task.Task {
 				}
 			}
 		}
+	}
+
+	return tasks
+}
+
+func (s *Scheduler) GetFailureTasks() []task.Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// 创建任务映射，用于去重
+	taskMap := make(map[string]task.Task)
+
+	// 添加内存中的失败任务
+	for _, t := range s.failureTasks {
+		taskMap[t.ID()] = t
+	}
+
+	// 如果有持久化层，从Redis加载所有失败记录对应的任务
+	if s.persistence != nil {
+		// 加载所有失败记录
+		allRecords, err := s.persistence.LoadAllFailureRecords()
+		if err == nil {
+			for taskID := range allRecords {
+				// 从Redis加载任务
+				t, err := s.persistence.LoadTask(taskID)
+				if err == nil {
+					taskMap[taskID] = t
+				}
+			}
+		}
+	}
+
+	// 将映射转换为切片
+	tasks := make([]task.Task, 0, len(taskMap))
+	for _, t := range taskMap {
+		tasks = append(tasks, t)
 	}
 
 	return tasks
