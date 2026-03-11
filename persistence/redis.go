@@ -128,10 +128,9 @@ func (r *RedisPersistence) LoadTask(id string) (task.Task, error) {
 
 	switch taskType {
 	case task.TaskTypeOnce:
-		execTime, _ := time.Parse(time.RFC3339, taskData["nextExecTime"].(string))
 		t = task.NewOnceTask(
 			taskData["id"].(string),
-			execTime,
+			taskData["nextExecTime"].(int64),
 			time.Duration(int(taskData["timeout"].(float64))),
 			&retryPolicy,
 			task.FuncID(taskData["funcID"].(string)),
@@ -186,4 +185,106 @@ func (r *RedisPersistence) DeleteTask(id string) error {
 // Close 关闭Redis连接
 func (r *RedisPersistence) Close() error {
 	return r.client.Close()
+}
+
+// SaveFailureRecord 保存任务失败记录到Redis
+func (r *RedisPersistence) SaveFailureRecord(record task.FailureRecord) error {
+	// 序列化失败记录
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+
+	// 保存到Redis列表，使用taskId作为key的一部分
+	key := "failure:" + record.TaskID
+	return r.client.RPush(r.ctx, key, data).Err()
+}
+
+// LoadFailureRecords 加载任务的失败记录
+func (r *RedisPersistence) LoadFailureRecords(taskID string) ([]task.FailureRecord, error) {
+	key := "failure:" + taskID
+
+	// 从Redis获取所有失败记录
+	dataList, err := r.client.LRange(r.ctx, key, 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// 反序列化失败记录
+	records := make([]task.FailureRecord, 0, len(dataList))
+	for _, data := range dataList {
+		var record task.FailureRecord
+		if err := json.Unmarshal([]byte(data), &record); err != nil {
+			continue
+		}
+		records = append(records, record)
+	}
+
+	return records, nil
+}
+
+// LoadAllFailureRecords 加载所有任务的失败记录
+func (r *RedisPersistence) LoadAllFailureRecords() (map[string][]task.FailureRecord, error) {
+	// 查找所有失败记录键
+	keys, err := r.client.Keys(r.ctx, "failure:*").Result()
+	if err != nil {
+		return nil, err
+	}
+
+	// 加载所有失败记录
+	allRecords := make(map[string][]task.FailureRecord)
+	for _, key := range keys {
+		taskID := key[8:] // 移除"failure:"前缀
+		records, err := r.LoadFailureRecords(taskID)
+		if err != nil {
+			continue
+		}
+		allRecords[taskID] = records
+	}
+
+	return allRecords, nil
+}
+
+// DeleteFailureRecord 删除指定的失败记录
+func (r *RedisPersistence) DeleteFailureRecord(taskID string, recordID string) error {
+	key := "failure:" + taskID
+
+	// 获取所有失败记录
+	records, err := r.LoadFailureRecords(taskID)
+	if err != nil {
+		return err
+	}
+
+	// 过滤掉要删除的记录
+	var remainingRecords []task.FailureRecord
+	for _, record := range records {
+		if record.ID != recordID {
+			remainingRecords = append(remainingRecords, record)
+		}
+	}
+
+	// 重新保存过滤后的记录
+	pipe := r.client.Pipeline()
+
+	// 删除原有的所有记录
+	pipe.Del(r.ctx, key)
+
+	// 添加过滤后的记录
+	for _, record := range remainingRecords {
+		data, err := json.Marshal(record)
+		if err != nil {
+			continue
+		}
+		pipe.RPush(r.ctx, key, data)
+	}
+
+	// 执行管道命令
+	_, err = pipe.Exec(r.ctx)
+	return err
+}
+
+// DeleteAllFailureRecords 删除指定任务的所有失败记录
+func (r *RedisPersistence) DeleteAllFailureRecords(taskID string) error {
+	key := "failure:" + taskID
+	return r.client.Del(r.ctx, key).Err()
 }

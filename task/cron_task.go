@@ -43,7 +43,7 @@ func NewCronTask(
 			id:           id,
 			timeout:      timeout,
 			retryPolicy:  retryPolicy,
-			nextExecTime: nextExec,
+			nextExecTime: nextExec.UnixMilli(),
 			taskType:     TaskTypeCron,
 			funcID:       funcID,
 			params:       params,
@@ -62,7 +62,7 @@ func (c *CronTask) UpdateNextExecTime() {
 		return
 	}
 	nextExec := schedule.Next(time.Now())
-	c.SetNextExecTime(nextExec)
+	c.SetNextExecTime(nextExec.UnixMilli())
 }
 
 func (c *CronTask) CronExpr() string {
